@@ -1,11 +1,9 @@
-"""User investment profile: persist client context across meetings.
+"""Buyer profile: persist first-time home buyer's purchase conditions.
 
-Phase A.1 — eliminates re-entering risk profile, budget, holding plans every
-meeting. The 투자컨설턴트 agent uses this profile to make truly client-specific
-recommendations (MANIFESTO 핵심 가치 2 — "각자의 자리에서 발언").
+MC 인터뷰 결과를 구조화하여 저장하고, 중개사·재무설계사·시장분석가에게
+컨텍스트 블록으로 주입한다.
 
-Storage: profiles/{name}.json — git-ignored except `example.json`.
-JSON (not YAML) for consistency with archive.py and zero new dependencies.
+Storage: profiles/{name}.json
 """
 from __future__ import annotations
 
@@ -17,59 +15,66 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PROFILES_DIR = REPO_ROOT / "profiles"
 DEFAULT_NAME = "default"
 
-RISK_PROFILES: dict[str, str] = {
-    "conservative": "보수적",
-    "moderate": "중립적",
-    "aggressive": "공격적",
+SCHOOL_PRIORITY: dict[str, str] = {
+    "low": "낮음",
+    "medium": "보통",
+    "high": "높음",
 }
 
-INVESTMENT_GOALS: dict[str, str] = {
-    "rental": "월세 수익형",
-    "capital_gain": "시세차익형",
-    "mixed": "혼합형 (월세 + 시세차익)",
-}
-
-LIFE_STAGES: dict[str, str] = {
-    "accumulation": "자산 형성기",
-    "expansion": "자산 확장기",
-    "preservation": "자산 보존기",
+PROPERTY_TYPES: dict[str, str] = {
+    "apartment": "아파트",
+    "villa": "빌라/다세대",
+    "officetel": "오피스텔",
+    "any": "무관",
 }
 
 
 @dataclass
-class Profile:
-    """Investment profile of the client (대표님)."""
+class BuyerProfile:
+    """Purchase conditions profile for first-time home buyer (고객님)."""
 
-    nickname: str = "대표님"
-    risk_profile: str = "moderate"          # conservative / moderate / aggressive
-    investment_goal: str = "rental"         # rental / capital_gain / mixed
-    budget_manwon: int = 0                  # 가용 예산 (만원). 0 = 미입력
-    property_count: int = 1                 # 보유 주택 수 (0=무주택, 1=1주택, ...)
-    holding_years: int = 5                  # 투자 시계 (년)
-    life_stage: str = "expansion"           # accumulation / expansion / preservation
-    notes: str = ""                         # 자유 메모
+    nickname: str = "고객님"
+    commute_location: str = ""            # 출근지 (예: 판교, 강남역, 재택)
+    budget_manwon: int = 0                # 총 구매 예산 (만원, 대출 포함). 0=미입력
+    own_funds_manwon: int = 0             # 자기자본 (만원). 0=미입력
+    monthly_payment_manwon: int = 0       # 월 원리금 감당 가능액 (만원). 0=미입력
+    family_size: int = 1                  # 가족 수 (1=혼자, 2=부부, 3+=자녀 포함)
+    has_children: bool = False            # 현재 자녀 있음
+    plans_children: bool = False          # 자녀 계획 있음
+    school_priority: str = "low"          # low / medium / high
+    preferred_area: str = ""             # 선호 지역 힌트 (예: 마포, 성동)
+    preferred_size_sqm: float = 0.0      # 선호 전용면적 (㎡). 0=미입력
+    preferred_type: str = "apartment"    # apartment / villa / officetel / any
+    move_in_months: int = 6              # 입주 희망 시기 (몇 개월 후)
+    residence_ratio: int = 100           # 실거주 비중 0~100 (100=완전 실거주)
+    notes: str = ""                      # 자유 메모
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Profile":
-        # Keep only known fields so future schema additions don't break old files
+    def from_dict(cls, d: dict) -> "BuyerProfile":
         known = {f for f in cls.__dataclass_fields__}
         filtered = {k: v for k, v in d.items() if k in known}
         return cls(**filtered)
 
     @property
-    def risk_label(self) -> str:
-        return RISK_PROFILES.get(self.risk_profile, self.risk_profile)
+    def school_priority_label(self) -> str:
+        return SCHOOL_PRIORITY.get(self.school_priority, self.school_priority)
 
     @property
-    def goal_label(self) -> str:
-        return INVESTMENT_GOALS.get(self.investment_goal, self.investment_goal)
+    def property_type_label(self) -> str:
+        return PROPERTY_TYPES.get(self.preferred_type, self.preferred_type)
 
     @property
-    def life_stage_label(self) -> str:
-        return LIFE_STAGES.get(self.life_stage, self.life_stage)
+    def family_label(self) -> str:
+        base = f"{self.family_size}인"
+        tags = []
+        if self.has_children:
+            tags.append("자녀 있음")
+        elif self.plans_children:
+            tags.append("자녀 계획 있음")
+        return f"{base} ({', '.join(tags)})" if tags else base
 
 
 # ----------------------------------------------------------------------
@@ -78,12 +83,11 @@ class Profile:
 
 
 def save_profile(
-    profile: Profile,
+    profile: BuyerProfile,
     name: str = DEFAULT_NAME,
     *,
     profiles_dir: Path | None = None,
 ) -> Path:
-    """Persist a profile to JSON."""
     base = profiles_dir or PROFILES_DIR
     base.mkdir(parents=True, exist_ok=True)
     path = base / f"{name}.json"
@@ -98,18 +102,16 @@ def load_profile(
     name: str = DEFAULT_NAME,
     *,
     profiles_dir: Path | None = None,
-) -> Profile | None:
-    """Load a profile by name. Returns None if missing."""
+) -> BuyerProfile | None:
     base = profiles_dir or PROFILES_DIR
     path = base / f"{name}.json"
     if not path.exists():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
-    return Profile.from_dict(data)
+    return BuyerProfile.from_dict(data)
 
 
 def list_profiles(*, profiles_dir: Path | None = None) -> list[str]:
-    """List available profile names (without .json suffix), sorted."""
     base = profiles_dir or PROFILES_DIR
     if not base.exists():
         return []
@@ -146,38 +148,51 @@ def _format_budget(manwon: int) -> str:
     return f"{manwon:,}만원"
 
 
-def _format_property_count(n: int) -> str:
-    if n <= 0:
-        return "무주택"
-    if n >= 3:
-        return f"{n}주택 (다주택자)"
-    return f"{n}주택"
+def _format_size(sqm: float) -> str:
+    if sqm <= 0:
+        return "미입력"
+    pyeong = sqm / 3.3058
+    return f"{sqm:.0f}㎡ (약 {pyeong:.0f}평형)"
 
 
-def format_for_agents(profile: Profile | None) -> str:
-    """Build a transcript block to inject as a 'user' message at meeting start.
+def _format_move_in(months: int) -> str:
+    if months <= 0:
+        return "미입력"
+    if months < 12:
+        return f"{months}개월 내"
+    years = months // 12
+    rem = months % 12
+    if rem == 0:
+        return f"{years}년 내"
+    return f"{years}년 {rem}개월 내"
 
-    Mirrors the style of `real_estate.format_for_agents` and
-    `archive.build_context_block` so the agents see a familiar shape.
-    """
+
+def format_for_agents(profile: BuyerProfile | None) -> str:
+    """Build a transcript block to inject as a 'user' message at meeting start."""
     if profile is None:
         return ""
     lines = [
-        "=== 👤 사용자(대표님) 투자 프로필 ===",
+        "=== 👤 고객님 구매 조건 프로필 ===",
         f"- 별칭: {profile.nickname}",
-        f"- 리스크 프로파일: {profile.risk_label}",
-        f"- 투자 목적: {profile.goal_label}",
-        f"- 가용 예산: {_format_budget(profile.budget_manwon)}",
-        f"- 보유 주택 수: {_format_property_count(profile.property_count)}",
-        f"- 투자 시계: {profile.holding_years}년 보유 계획",
-        f"- 생애주기: {profile.life_stage_label}",
+        f"- 출근지: {profile.commute_location or '미입력'}",
+        f"- 총 구매 예산: {_format_budget(profile.budget_manwon)}",
+        f"- 자기자본: {_format_budget(profile.own_funds_manwon)}",
+        f"- 월 원리금 감당 가능액: {_format_budget(profile.monthly_payment_manwon)}",
+        f"- 가족 구성: {profile.family_label}",
+        f"- 학군 중요도: {profile.school_priority_label}",
+        f"- 선호 지역: {profile.preferred_area or '미입력'}",
+        f"- 선호 평형: {_format_size(profile.preferred_size_sqm)}",
+        f"- 선호 매물 유형: {profile.property_type_label}",
+        f"- 입주 희망 시기: {_format_move_in(profile.move_in_months)}",
+        f"- 실거주 목적 비중: {profile.residence_ratio}%",
     ]
     if profile.notes.strip():
         lines.append(f"- 메모: {profile.notes.strip()}")
     lines.append("")
     lines.append(
-        "투자컨설턴트는 이 프로필에 기반해 적합성을 자문하세요. "
-        "CFO·CSO도 참고하되 자기 영역을 벗어나지 마세요."
+        "중개사는 출근지·예산·가족 구성을 기반으로 입지를 추천하세요. "
+        "재무설계사는 예산·자기자본·월 감당액을 계산 인풋으로 활용하세요. "
+        "시장분석가는 선호 지역을 분석 대상으로 삼으세요."
     )
     lines.append("=== 프로필 끝 ===")
     return "\n".join(lines)

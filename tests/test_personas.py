@@ -1,15 +1,15 @@
-"""Tests for personas module."""
+"""Tests for personas module — 생애 첫 주택 구매 자문 시스템."""
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from personas import AGENT_CONFIG, load_persona_spec, build_system_prompt
+from personas import AGENT_CONFIG, DIVERSITY_ANGLES, load_persona_spec, build_system_prompt
 
 
 class TestAgentConfig:
     def test_has_all_agents(self):
-        for key in ["practitioner", "redteam", "mentor", "clerk"]:
+        for key in ["mc", "broker", "financial", "analyst", "clerk"]:
             assert key in AGENT_CONFIG
 
     def test_agent_has_required_fields(self):
@@ -21,90 +21,115 @@ class TestAgentConfig:
 
     def test_names_korean(self):
         names = {cfg["name"] for cfg in AGENT_CONFIG.values()}
-        assert "CFO" in names
-        assert "CSO" in names
-        assert "투자컨설턴트" in names
+        assert "인터뷰어" in names
+        assert "중개사" in names
+        assert "재무설계사" in names
+        assert "시장분석가" in names
         assert "비서실장" in names
+
+    def test_old_investment_agents_removed(self):
+        for key in ["practitioner", "redteam", "mentor"]:
+            assert key not in AGENT_CONFIG, f"구 투자 에이전트 {key}가 아직 남아있음"
 
 
 class TestLoadPersonaSpec:
-    def test_loads_practitioner(self):
-        spec = load_persona_spec("practitioner")
-        assert len(spec) > 100
-
     def test_loads_all_agents(self):
         for key in AGENT_CONFIG:
             spec = load_persona_spec(key)
             assert isinstance(spec, str)
-            assert len(spec) > 50
+            assert len(spec) > 100
+
+    def test_mc_spec_loaded(self):
+        spec = load_persona_spec("mc")
+        assert len(spec) > 100
+
+    def test_broker_spec_loaded(self):
+        spec = load_persona_spec("broker")
+        assert len(spec) > 100
 
 
 class TestBuildSystemPrompt:
-    def test_contains_persona_spec(self):
-        prompt = build_system_prompt("practitioner")
-        assert "페르소나 명세서" in prompt
+    def test_mc_prompt_has_interview_context(self):
+        prompt = build_system_prompt("mc")
+        assert "인터뷰어" in prompt or "MC" in prompt
 
-    def test_contains_boundary_rules(self):
-        prompt = build_system_prompt("practitioner")
-        assert "영역 경계" in prompt or "자기 영역만" in prompt
+    def test_mc_prompt_has_one_question_rule(self):
+        prompt = build_system_prompt("mc")
+        assert "하나" in prompt or "한 번에" in prompt
+
+    def test_analysis_agents_have_boundary_rules(self):
+        for key in ("broker", "financial", "analyst"):
+            prompt = build_system_prompt(key)
+            assert "자기 영역만" in prompt or "영역 경계" in prompt
 
     def test_contains_korean_instruction(self):
-        prompt = build_system_prompt("redteam")
-        assert "한국어" in prompt
+        for key in AGENT_CONFIG:
+            prompt = build_system_prompt(key)
+            assert "한국어" in prompt
 
 
 class TestAgentBoundaryRules:
-    """PREMORTEM 시나리오 3 대응 — 각 에이전트의 영역 경계가 프롬프트에 명시되어 있는지 검증."""
+    """각 에이전트의 영역 경계가 페르소나 명세서에 명시되어 있는지 검증."""
 
-    def test_cfo_boundary_in_system_prompt(self):
-        prompt = build_system_prompt("practitioner")
-        assert "수익률" in prompt and "세금" in prompt
-        assert "자기 영역만" in prompt or "영역 경계" in prompt
+    def test_broker_spec_has_location_focus(self):
+        spec = load_persona_spec("broker")
+        assert "입지" in spec or "동네" in spec
+        assert "재무설계사" in spec or "시장분석가" in spec  # 타 영역 경계 명시
 
-    def test_cso_boundary_in_system_prompt(self):
-        prompt = build_system_prompt("redteam")
-        assert "타이밍" in prompt or "리스크" in prompt
-        assert "자기 영역만" in prompt or "영역 경계" in prompt
+    def test_financial_spec_has_loan_focus(self):
+        spec = load_persona_spec("financial")
+        assert "LTV" in spec or "DSR" in spec or "대출" in spec
 
-    def test_consultant_boundary_in_system_prompt(self):
-        prompt = build_system_prompt("mentor")
-        assert "적합성" in prompt or "포트폴리오" in prompt
-        assert "자기 영역만" in prompt or "영역 경계" in prompt
-
-    def test_cfo_spec_forbids_strategy(self):
-        spec = load_persona_spec("practitioner")
-        assert "CSO" in spec or "전략" in spec
-        assert "투자컨설턴트" in spec or "적합성" in spec
-
-    def test_cso_spec_forbids_tax_calculation(self):
-        spec = load_persona_spec("redteam")
-        assert "세금" in spec or "재무" in spec or "CFO" in spec
-
-    def test_consultant_spec_forbids_detailed_numbers(self):
-        spec = load_persona_spec("mentor")
-        assert "수치 계산" in spec or "CFO" in spec
-
-    def test_cfo_must_cite_sources(self):
-        spec = load_persona_spec("practitioner")
+    def test_financial_spec_cites_sources(self):
+        spec = load_persona_spec("financial")
         assert "출처" in spec
-        assert "[출처:" in spec or "[출처: ___]" in spec
+        assert "[출처:" in spec
 
-    def test_cso_must_raise_risk(self):
-        spec = load_persona_spec("redteam")
+    def test_analyst_spec_raises_risk(self):
+        spec = load_persona_spec("analyst")
         assert "리스크" in spec
-        assert "반론" in spec or "반드시" in spec
+        assert "반드시" in spec or "MUST" in spec or "필수" in spec
+
+    def test_analyst_spec_cites_sources(self):
+        spec = load_persona_spec("analyst")
+        assert "출처" in spec
+        assert "[출처:" in spec
+
+    def test_mc_spec_forbids_analysis(self):
+        spec = load_persona_spec("mc")
+        assert "분석" in spec or "가격" in spec  # 영역 경계 언급 확인
+
+    def test_broker_spec_forbids_financial_calc(self):
+        spec = load_persona_spec("broker")
+        assert "재무설계사" in spec  # 재무 계산 타 영역 명시
+
+    def test_financial_spec_forbids_location(self):
+        spec = load_persona_spec("financial")
+        assert "중개사" in spec  # 입지 추천 타 영역 명시
+
+    def test_analyst_spec_forbids_financial_calc(self):
+        spec = load_persona_spec("analyst")
+        assert "재무설계사" in spec
 
 
 class TestHallucinationGuards:
-    """PREMORTEM 시나리오 2 대응 — 데이터 없을 때 안전한 응답을 하는지 검증."""
+    """데이터 없을 때 안전한 응답을 하는지 검증."""
 
-    def test_cfo_spec_has_no_data_fallback(self):
-        spec = load_persona_spec("practitioner")
-        assert "데이터" in spec and ("확인" in spec or "부족" in spec)
+    def test_financial_spec_has_no_data_fallback(self):
+        spec = load_persona_spec("financial")
+        assert "데이터" in spec or "확인" in spec
 
-    def test_cfo_prompt_forbids_guessing(self):
-        prompt = build_system_prompt("practitioner")
-        assert "느낌" in prompt or "아마" in prompt or "출처" in prompt
+    def test_analyst_spec_sample_size_guard(self):
+        spec = load_persona_spec("analyst")
+        assert "표본" in spec
+
+    def test_analyst_spec_has_p50_definition(self):
+        spec = load_persona_spec("analyst")
+        assert "P50" in spec
+
+    def test_analyst_spec_admits_hedonic_limitation(self):
+        spec = load_persona_spec("analyst")
+        assert "헤도닉" in spec
 
     def test_empty_summaries_return_empty_text(self):
         from real_estate import format_for_agents
@@ -114,146 +139,106 @@ class TestHallucinationGuards:
         from yield_analyzer import format_analysis_for_agents
         assert format_analysis_for_agents([]) == ""
 
-    def test_empty_tax_returns_empty_text(self):
-        from tax import format_tax_for_agents
-        assert format_tax_for_agents([]) == ""
 
-    def test_empty_scorecard_returns_empty_text(self):
-        from scorecard import format_scorecard_for_agents
-        assert format_scorecard_for_agents([]) == ""
+class TestBuyerProfileGuidance:
+    """에이전트 명세서가 구매 조건 프로필을 활용하도록 가이드되는지 검증."""
 
-    def test_empty_portfolio_returns_empty_text(self):
-        from portfolio import format_portfolio_for_agents
-        assert format_portfolio_for_agents([]) == ""
+    def test_broker_spec_mentions_commute(self):
+        spec = load_persona_spec("broker")
+        assert "출근지" in spec or "출근" in spec
 
-    def test_empty_cashflow_returns_empty_text(self):
-        from cashflow import format_cashflow_for_agents
-        assert format_cashflow_for_agents([]) == ""
+    def test_broker_spec_maps_budget_to_area(self):
+        spec = load_persona_spec("broker")
+        assert "예산" in spec
 
-    def test_empty_montecarlo_returns_empty_text(self):
-        from monte_carlo import format_monte_carlo_for_agents
-        assert format_monte_carlo_for_agents([]) == ""
+    def test_financial_spec_uses_own_funds(self):
+        spec = load_persona_spec("financial")
+        assert "자기자본" in spec or "예산" in spec
 
-    def test_unknown_region_gets_sample_data(self):
-        from real_estate import get_region_data
-        result = get_region_data("알수없는구")
-        assert result.is_sample is True
+    def test_financial_spec_mentions_monthly_payment(self):
+        spec = load_persona_spec("financial")
+        assert "월" in spec and ("원리금" in spec or "부담" in spec)
 
+    def test_analyst_spec_uses_preferred_area(self):
+        spec = load_persona_spec("analyst")
+        assert "지역" in spec or "권역" in spec
 
-class TestProfileGuidance:
-    """Phase A.4 — 페르소나 명세서가 사용자 프로필 블록을 활용하도록 가이드되는지 검증."""
+    def test_system_prompt_for_broker_contains_profile_guidance(self):
+        prompt = build_system_prompt("broker")
+        assert "프로필" in prompt or "출근지" in prompt
 
-    def test_mentor_spec_mentions_profile(self):
-        spec = load_persona_spec("mentor")
-        assert "프로필" in spec, "mentor.md에 '프로필' 가이드 섹션 누락"
-
-    def test_mentor_spec_maps_all_risk_profile_levels(self):
-        spec = load_persona_spec("mentor")
-        for level in ["보수적", "중립적", "공격적"]:
-            assert level in spec, f"mentor.md에 '{level}' 프로파일 톤 매핑 누락"
-
-    def test_mentor_spec_maps_investment_goal_types(self):
-        spec = load_persona_spec("mentor")
-        assert "월세" in spec
-        assert "시세차익" in spec or "시세 차익" in spec
-
-    def test_mentor_spec_mentions_holding_horizon(self):
-        spec = load_persona_spec("mentor")
-        assert "시계" in spec or "보유 기간" in spec or "년 보유" in spec
-
-    def test_mentor_spec_mentions_life_stage(self):
-        spec = load_persona_spec("mentor")
-        for stage in ["자산 형성기", "자산 확장기", "자산 보존기"]:
-            assert stage in spec, f"mentor.md에 생애주기 '{stage}' 매핑 누락"
-
-    def test_cfo_spec_uses_profile_for_inputs(self):
-        spec = load_persona_spec("practitioner")
-        assert "프로필" in spec, "practitioner.md에 프로필 활용 가이드 누락"
-        assert "예산" in spec, "practitioner.md에 budget_manwon 활용 가이드 누락"
-        assert "주택" in spec, "practitioner.md에 property_count 활용 가이드 누락"
-
-    def test_cso_spec_uses_profile_for_critique(self):
-        spec = load_persona_spec("redteam")
-        assert "프로필" in spec or "프로파일" in spec, \
-            "redteam.md에 프로필/프로파일 활용 가이드 누락"
-
-    def test_cfo_spec_still_forbids_suitability_advice(self):
-        """프로필 활용 추가 후에도 CFO의 영역 경계가 살아있어야 함."""
-        spec = load_persona_spec("practitioner")
-        assert "투자컨설턴트" in spec or "적합성" in spec
-
-    def test_cso_spec_still_forbids_suitability_advice(self):
-        """프로필 활용 추가 후에도 CSO의 영역 경계가 살아있어야 함."""
-        spec = load_persona_spec("redteam")
-        assert "투자컨설턴트" in spec or "적합성" in spec
-
-    def test_diversity_angles_include_profile_for_mentor(self):
-        from personas import DIVERSITY_ANGLES
-        assert "프로필반영" in DIVERSITY_ANGLES["mentor"], \
-            "mentor의 다양성 각도에 '프로필반영' 추가 누락"
-
-    def test_system_prompt_for_mentor_contains_profile_guidance(self):
-        """build_system_prompt가 페르소나 명세에서 프로필 섹션을 그대로 포함하는지."""
-        prompt = build_system_prompt("mentor")
-        assert "프로필" in prompt
+    def test_system_prompt_for_financial_contains_profile_guidance(self):
+        prompt = build_system_prompt("financial")
+        assert "프로필" in prompt or "예산" in prompt
 
 
 class TestPropertyAuditGuidance:
-    """Phase 1 (property_audit) — clerk·practitioner 명세에 호가 적정성 평가 가이드가 동기화되는지 검증."""
+    """property_audit 모드 — 관련 에이전트 명세에 호가 적정성 평가 가이드가 있는지 검증."""
 
     def test_clerk_spec_defines_simple_summary(self):
         spec = load_persona_spec("clerk")
-        assert "simple_summary" in spec, "clerk.md에 simple_summary 출력 명세 누락"
+        assert "simple_summary" in spec
 
     def test_clerk_spec_defines_pro_summary(self):
         spec = load_persona_spec("clerk")
-        assert "pro_summary" in spec, "clerk.md에 pro_summary 출력 명세 누락"
+        assert "pro_summary" in spec
 
     def test_clerk_spec_mentions_property_audit_mode(self):
         spec = load_persona_spec("clerk")
-        assert "property_audit" in spec or "호가 적정성" in spec, \
-            "clerk.md에 property_audit 모드 섹션 누락"
-
-    def test_clerk_spec_simple_mode_forbids_jargon(self):
-        spec = load_persona_spec("clerk")
-        assert "통계 용어" in spec or "P50" in spec, \
-            "clerk.md simple_summary에 통계 용어 사용 금지 가이드 누락"
+        assert "property_audit" in spec or "호가 적정성" in spec
 
     def test_clerk_spec_labels_for_simple(self):
         spec = load_persona_spec("clerk")
         for label in ["적정", "고평가", "저평가"]:
             assert label in spec, f"clerk.md simple_summary 라벨 '{label}' 누락"
 
-    def test_practitioner_spec_has_property_audit_section(self):
-        spec = load_persona_spec("practitioner")
-        assert "호가 적정성" in spec or "property_audit" in spec, \
-            "practitioner.md에 호가 적정성 평가 가이드 섹션 누락"
+    def test_clerk_spec_simple_mode_forbids_jargon(self):
+        spec = load_persona_spec("clerk")
+        assert "통계 용어" in spec or "P50" in spec
 
-    def test_practitioner_spec_defines_p50_baseline(self):
-        spec = load_persona_spec("practitioner")
-        assert "P50" in spec, "practitioner.md에 P50 적정가 정의 누락"
+    def test_analyst_spec_has_property_audit_section(self):
+        spec = load_persona_spec("analyst")
+        assert "호가 적정성" in spec or "property_audit" in spec
 
-    def test_practitioner_spec_mentions_sample_size_guard(self):
-        spec = load_persona_spec("practitioner")
-        assert "표본" in spec, "practitioner.md에 표본 크기 가드 가이드 누락"
+    def test_analyst_spec_defines_p50_baseline(self):
+        spec = load_persona_spec("analyst")
+        assert "P50" in spec
 
-    def test_practitioner_spec_admits_hedonic_limitation(self):
-        """1차 단계에서 헤도닉 보정 미적용임을 명시 — 강희준 시뮬 통찰 반영."""
-        spec = load_persona_spec("practitioner")
-        assert "헤도닉" in spec, "practitioner.md에 헤도닉 보정 한계 명시 누락"
+    def test_analyst_spec_mentions_sample_size_guard(self):
+        spec = load_persona_spec("analyst")
+        assert "표본" in spec
 
-    def test_practitioner_property_audit_preserves_boundary(self):
-        """호가 적정성 가이드 추가 후에도 영역 경계가 살아있어야 함."""
-        spec = load_persona_spec("practitioner")
-        assert "투자컨설턴트" in spec, "CFO ↔ 투자컨설턴트 영역 경계 누락"
-        assert "CSO" in spec, "CFO ↔ CSO 영역 경계 누락"
+    def test_financial_spec_has_property_audit_section(self):
+        spec = load_persona_spec("financial")
+        assert "호가 적정성" in spec or "property_audit" in spec
 
-    def test_diversity_angles_include_property_audit_for_practitioner(self):
-        from personas import DIVERSITY_ANGLES
-        assert "호가적정성" in DIVERSITY_ANGLES["practitioner"], \
-            "practitioner의 다양성 각도에 '호가적정성' 추가 누락"
 
-    def test_system_prompt_for_practitioner_contains_property_audit(self):
-        """build_system_prompt가 페르소나 명세에서 호가 적정성 섹션을 그대로 포함하는지."""
-        prompt = build_system_prompt("practitioner")
-        assert "호가 적정성" in prompt or "property_audit" in prompt
+class TestDiversityAngles:
+    """DIVERSITY_ANGLES가 분석 에이전트에 대해 정의되어 있는지 검증."""
+
+    def test_broker_has_diversity_angles(self):
+        assert "broker" in DIVERSITY_ANGLES
+        assert len(DIVERSITY_ANGLES["broker"]) >= 4
+
+    def test_financial_has_diversity_angles(self):
+        assert "financial" in DIVERSITY_ANGLES
+        assert len(DIVERSITY_ANGLES["financial"]) >= 4
+
+    def test_analyst_has_diversity_angles(self):
+        assert "analyst" in DIVERSITY_ANGLES
+        assert len(DIVERSITY_ANGLES["analyst"]) >= 4
+
+    def test_mc_has_no_diversity_angles(self):
+        assert "mc" not in DIVERSITY_ANGLES
+
+    def test_broker_angles_include_location(self):
+        angles = DIVERSITY_ANGLES["broker"]
+        assert any("입지" in a or "추천" in a for a in angles)
+
+    def test_financial_angles_include_loan(self):
+        angles = DIVERSITY_ANGLES["financial"]
+        assert any("대출" in a or "LTV" in a or "DSR" in a for a in angles)
+
+    def test_analyst_angles_include_price(self):
+        angles = DIVERSITY_ANGLES["analyst"]
+        assert any("실거래" in a or "가격" in a or "P50" in a for a in angles)

@@ -1,9 +1,8 @@
-"""Tests for profiles module (Phase A.1)."""
+"""Tests for profiles module — 생애 첫 주택 구매자 프로필."""
 from profiles import (
-    INVESTMENT_GOALS,
-    LIFE_STAGES,
-    RISK_PROFILES,
-    Profile,
+    SCHOOL_PRIORITY,
+    PROPERTY_TYPES,
+    BuyerProfile,
     delete_profile,
     format_for_agents,
     list_profiles,
@@ -12,46 +11,69 @@ from profiles import (
 )
 
 
-class TestProfileDataclass:
+class TestBuyerProfileDataclass:
     def test_default_profile_is_valid(self):
-        p = Profile()
-        assert p.nickname == "대표님"
-        assert p.risk_profile in RISK_PROFILES
-        assert p.investment_goal in INVESTMENT_GOALS
-        assert p.life_stage in LIFE_STAGES
+        p = BuyerProfile()
+        assert p.nickname == "고객님"
+        assert p.school_priority in SCHOOL_PRIORITY
+        assert p.preferred_type in PROPERTY_TYPES
         assert p.budget_manwon == 0
-        assert p.property_count == 1
-        assert p.holding_years == 5
+        assert p.own_funds_manwon == 0
+        assert p.monthly_payment_manwon == 0
+        assert p.family_size == 1
+        assert p.residence_ratio == 100
 
     def test_labels_translate_to_korean(self):
-        p = Profile(
-            risk_profile="conservative",
-            investment_goal="capital_gain",
-            life_stage="preservation",
+        p = BuyerProfile(
+            school_priority="high",
+            preferred_type="villa",
         )
-        assert p.risk_label == "보수적"
-        assert p.goal_label == "시세차익형"
-        assert p.life_stage_label == "자산 보존기"
+        assert p.school_priority_label == "높음"
+        assert p.property_type_label == "빌라/다세대"
+
+    def test_family_label_without_children(self):
+        p = BuyerProfile(family_size=2)
+        assert "2인" in p.family_label
+        assert "자녀" not in p.family_label
+
+    def test_family_label_with_children(self):
+        p = BuyerProfile(family_size=3, has_children=True)
+        assert "3인" in p.family_label
+        assert "자녀 있음" in p.family_label
+
+    def test_family_label_plans_children(self):
+        p = BuyerProfile(family_size=2, plans_children=True)
+        assert "자녀 계획 있음" in p.family_label
 
     def test_to_dict_from_dict_roundtrip(self):
-        p = Profile(nickname="홍길동", budget_manwon=45000, notes="테스트")
+        p = BuyerProfile(
+            nickname="홍길동",
+            commute_location="판교",
+            budget_manwon=60000,
+            notes="1층 제외",
+        )
         d = p.to_dict()
-        p2 = Profile.from_dict(d)
+        p2 = BuyerProfile.from_dict(d)
         assert p == p2
 
     def test_from_dict_ignores_unknown_keys(self):
         d = {"nickname": "X", "unknown_field": "ignored"}
-        p = Profile.from_dict(d)
+        p = BuyerProfile.from_dict(d)
         assert p.nickname == "X"
 
     def test_unknown_enum_value_falls_back_to_raw(self):
-        p = Profile(risk_profile="custom_X")
-        assert p.risk_label == "custom_X"
+        p = BuyerProfile(school_priority="custom_X")
+        assert p.school_priority_label == "custom_X"
 
 
 class TestPersistence:
     def test_save_and_load_roundtrip(self, tmp_path):
-        p = Profile(nickname="홍대표", budget_manwon=50000, notes="강남 우선")
+        p = BuyerProfile(
+            nickname="홍대표",
+            commute_location="강남역",
+            budget_manwon=60000,
+            notes="마포 우선",
+        )
         path = save_profile(p, "test_user", profiles_dir=tmp_path)
         assert path.exists()
         loaded = load_profile("test_user", profiles_dir=tmp_path)
@@ -64,13 +86,13 @@ class TestPersistence:
         assert list_profiles(profiles_dir=tmp_path) == []
 
     def test_list_profiles_sorted(self, tmp_path):
-        save_profile(Profile(), "zebra", profiles_dir=tmp_path)
-        save_profile(Profile(), "apple", profiles_dir=tmp_path)
-        save_profile(Profile(), "mango", profiles_dir=tmp_path)
+        save_profile(BuyerProfile(), "zebra", profiles_dir=tmp_path)
+        save_profile(BuyerProfile(), "apple", profiles_dir=tmp_path)
+        save_profile(BuyerProfile(), "mango", profiles_dir=tmp_path)
         assert list_profiles(profiles_dir=tmp_path) == ["apple", "mango", "zebra"]
 
     def test_delete_profile(self, tmp_path):
-        save_profile(Profile(), "tmp", profiles_dir=tmp_path)
+        save_profile(BuyerProfile(), "tmp", profiles_dir=tmp_path)
         assert delete_profile("tmp", profiles_dir=tmp_path)
         assert load_profile("tmp", profiles_dir=tmp_path) is None
 
@@ -79,14 +101,14 @@ class TestPersistence:
 
     def test_save_creates_directory(self, tmp_path):
         nested = tmp_path / "nested" / "profiles"
-        save_profile(Profile(), "x", profiles_dir=nested)
+        save_profile(BuyerProfile(), "x", profiles_dir=nested)
         assert nested.exists()
 
     def test_save_writes_utf8_korean(self, tmp_path):
-        p = Profile(notes="강남구 우선")
+        p = BuyerProfile(notes="마포구 우선")
         path = save_profile(p, "kr", profiles_dir=tmp_path)
         content = path.read_text(encoding="utf-8")
-        assert "강남구 우선" in content
+        assert "마포구 우선" in content
 
 
 class TestFormatForAgents:
@@ -94,50 +116,75 @@ class TestFormatForAgents:
         assert format_for_agents(None) == ""
 
     def test_includes_key_info(self):
-        p = Profile(
-            nickname="홍대표",
-            risk_profile="aggressive",
-            investment_goal="rental",
-            budget_manwon=45000,
-            property_count=2,
-            holding_years=7,
-            life_stage="expansion",
-            notes="강남 우선 검토",
+        p = BuyerProfile(
+            nickname="홍길동",
+            commute_location="판교",
+            budget_manwon=60000,
+            own_funds_manwon=20000,
+            monthly_payment_manwon=180,
+            family_size=2,
+            plans_children=True,
+            school_priority="medium",
+            preferred_area="마포구",
+            preferred_size_sqm=84.0,
+            preferred_type="apartment",
+            move_in_months=6,
+            residence_ratio=90,
+            notes="1층 제외, 남향 선호",
         )
         text = format_for_agents(p)
-        assert "홍대표" in text
-        assert "공격적" in text
-        assert "월세 수익형" in text
-        assert "4억 5,000만원" in text
-        assert "2주택" in text
-        assert "7년 보유" in text
-        assert "자산 확장기" in text
-        assert "강남 우선 검토" in text
+        assert "홍길동" in text
+        assert "판교" in text
+        assert "6억원" in text
+        assert "2억원" in text
+        assert "보통" in text   # school_priority medium
+        assert "마포구" in text
+        assert "아파트" in text
+        assert "6개월 내" in text
+        assert "90%" in text
+        assert "1층 제외" in text
 
     def test_zero_budget_renders_as_미입력(self):
-        p = Profile(budget_manwon=0)
+        p = BuyerProfile(budget_manwon=0)
         assert "미입력" in format_for_agents(p)
 
     def test_round_eok_budget(self):
-        p = Profile(budget_manwon=30000)
-        assert "3억원" in format_for_agents(p)
+        p = BuyerProfile(budget_manwon=60000)
+        assert "6억원" in format_for_agents(p)
 
-    def test_no_house_label(self):
-        p = Profile(property_count=0)
-        assert "무주택" in format_for_agents(p)
-
-    def test_three_or_more_houses_marked_multi(self):
-        p = Profile(property_count=4)
-        text = format_for_agents(p)
-        assert "다주택자" in text
+    def test_partial_eok_budget(self):
+        p = BuyerProfile(budget_manwon=65000)
+        assert "6억 5,000만원" in format_for_agents(p)
 
     def test_notes_omitted_when_empty(self):
-        p = Profile(notes="")
+        p = BuyerProfile(notes="")
         text = format_for_agents(p)
         assert "메모:" not in text
 
-    def test_block_targets_consultant(self):
-        p = Profile()
+    def test_block_targets_broker_financial_analyst(self):
+        p = BuyerProfile()
         text = format_for_agents(p)
-        assert "투자컨설턴트" in text
-        assert "프로필" in text
+        assert "중개사" in text
+        assert "재무설계사" in text
+        assert "시장분석가" in text
+
+    def test_size_formatted_with_pyeong(self):
+        p = BuyerProfile(preferred_size_sqm=84.0)
+        text = format_for_agents(p)
+        assert "84㎡" in text
+        assert "평형" in text
+
+    def test_zero_size_renders_as_미입력(self):
+        p = BuyerProfile(preferred_size_sqm=0.0)
+        text = format_for_agents(p)
+        assert "미입력" in text
+
+    def test_move_in_months_formatted(self):
+        p = BuyerProfile(move_in_months=12)
+        text = format_for_agents(p)
+        assert "1년 내" in text
+
+    def test_family_with_children_in_block(self):
+        p = BuyerProfile(family_size=3, has_children=True)
+        text = format_for_agents(p)
+        assert "자녀 있음" in text

@@ -205,28 +205,28 @@ class TestConsensus:
 
 class TestDiversityAngles:
     def test_angles_defined(self):
-        assert "practitioner" in DIVERSITY_ANGLES
-        assert "redteam" in DIVERSITY_ANGLES
-        assert "mentor" in DIVERSITY_ANGLES
+        assert "broker" in DIVERSITY_ANGLES
+        assert "financial" in DIVERSITY_ANGLES
+        assert "analyst" in DIVERSITY_ANGLES
 
     def test_reminder_with_unused(self):
-        reminder = build_diversity_reminder("practitioner", ["수익률", "대출"])
+        reminder = build_diversity_reminder("broker", ["입지추천", "동네분위기"])
         assert "다양성 리마인더" in reminder
-        assert "세금" in reminder or "현금흐름" in reminder
+        assert "학군" in reminder or "교통" in reminder
 
     def test_reminder_all_used(self):
-        all_angles = DIVERSITY_ANGLES["practitioner"]
-        reminder = build_diversity_reminder("practitioner", all_angles)
+        all_angles = DIVERSITY_ANGLES["broker"]
+        reminder = build_diversity_reminder("broker", all_angles)
         assert reminder == ""
 
     def test_detect_angles(self):
-        text = "수익률이 3%이고 대출 조건은..."
-        angles = detect_used_angles("practitioner", text)
-        assert "수익률" in angles
-        assert "대출" in angles
+        text = "입지추천과 교통 분석을 해봤습니다..."
+        angles = detect_used_angles("broker", text)
+        assert "입지추천" in angles
+        assert "교통" in angles
 
     def test_detect_no_match(self):
-        angles = detect_used_angles("practitioner", "일반적인 의견입니다.")
+        angles = detect_used_angles("broker", "일반적인 의견입니다.")
         assert len(angles) == 0
 
 

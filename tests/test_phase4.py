@@ -215,30 +215,30 @@ class TestPortfolio:
 # ── Demo mock updated ──
 
 class TestDemoMockPhase4:
-    def test_demo_shows_tax(self):
+    def test_demo_shows_acquisition_tax(self):
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
         assert result.returncode == 0
-        assert "세금" in result.stdout
+        assert "취득세" in result.stdout
 
-    def test_demo_shows_scorecard(self):
+    def test_demo_shows_consultation_record(self):
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
-        assert "스코어카드" in result.stdout
+        assert "상담록" in result.stdout
 
-    def test_demo_shows_portfolio(self):
+    def test_demo_shows_next_action(self):
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
-        assert "포트폴리오" in result.stdout
+        assert "Next Action" in result.stdout
 
 
 # ── CLI flags ──

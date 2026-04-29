@@ -194,10 +194,10 @@ class TestMockDemoE2E:
         demo_mock.main()
         captured = capsys.readouterr()
         assert "Mock Demo" in captured.out
-        assert "세금 시뮬레이션" in captured.out
-        assert "스코어카드" in captured.out
-        assert "포트폴리오" in captured.out
-        assert "회의록" in captured.out
+        assert "상담록" in captured.out
+        assert "비서실장" in captured.out
+        assert "체크리스트" in captured.out
+        assert "핵심 안건" in captured.out
         files = list(tmp_path.glob("*.md"))
         assert len(files) == 1
 

@@ -37,7 +37,7 @@ from personas import (
     AGENT_CONFIG, build_system_prompt,
     build_diversity_reminder, detect_used_angles,
 )
-from profiles import Profile, format_for_agents as format_profile_for_agents
+from profiles import BuyerProfile as Profile, format_for_agents as format_profile_for_agents
 from real_estate import format_for_agents, get_multi_region_data
 from source_validator import validate_text
 from file_parser import (
@@ -52,7 +52,7 @@ from yield_analyzer import (
 from scenario import format_full_scenario_for_agents
 
 MEETINGS_DIR = Path(__file__).resolve().parent.parent / "meetings"
-SPEAKERS: list[str] = ["practitioner", "redteam", "mentor"]
+SPEAKERS: list[str] = ["broker", "financial", "analyst"]
 CLERK_KEY = "clerk"
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
@@ -333,7 +333,7 @@ class Meeting:
             # Phase B.2: source-citation guard for CFO only.
             # MANIFESTO 가치 1 — 페르소나가 출처를 깜빡해도 코드가 잡아낸다.
             warnings: list[str] = []
-            if key == "practitioner" and not failed:
+            if key == "financial" and not failed:
                 warnings = [w.message for w in validate_text(text_out)]
             turn = {
                 "role": "agent",

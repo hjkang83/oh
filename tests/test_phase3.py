@@ -130,29 +130,29 @@ class TestDemoMockIntegration:
         )
         assert result.returncode == 0
 
-    def test_demo_mock_shows_cashflow(self):
+    def test_demo_mock_shows_minutes(self):
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
-        assert "현금흐름" in result.stdout
+        assert "비서실장" in result.stdout or "상담록" in result.stdout
 
-    def test_demo_mock_shows_monte_carlo(self):
+    def test_demo_mock_shows_checklist(self):
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
-        assert "Monte Carlo" in result.stdout
+        assert "체크리스트" in result.stdout
 
-    def test_demo_mock_shows_irr(self):
+    def test_demo_mock_shows_ltv(self):
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
-        assert "IRR" in result.stdout
+        assert "LTV" in result.stdout
 
 
 # ── CLI help check ──

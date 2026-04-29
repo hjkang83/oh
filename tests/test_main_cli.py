@@ -148,10 +148,10 @@ class TestLoadProfileOrWarn:
         assert "찾을 수 없습니다" in out
 
     def test_loads_and_announces(self, isolated_profiles_dir, capsys):
-        from profiles import Profile, save_profile
+        from profiles import BuyerProfile, save_profile
         from main import _load_profile_or_warn
         save_profile(
-            Profile(nickname="홍대표", risk_profile="conservative"),
+            BuyerProfile(nickname="홍대표", commute_location="강남역"),
             "alice",
             profiles_dir=isolated_profiles_dir,
         )
@@ -160,7 +160,7 @@ class TestLoadProfileOrWarn:
         assert p.nickname == "홍대표"
         out = capsys.readouterr().out
         assert "홍대표" in out
-        assert "보수적" in out
+        assert "강남역" in out
 
 
 class TestPrintProfileList:
@@ -172,10 +172,10 @@ class TestPrintProfileList:
         assert "--init-profile" in out
 
     def test_lists_profiles(self, isolated_profiles_dir, capsys):
-        from profiles import Profile, save_profile
+        from profiles import BuyerProfile, save_profile
         from main import _print_profile_list
-        save_profile(Profile(nickname="A"), "alpha", profiles_dir=isolated_profiles_dir)
-        save_profile(Profile(nickname="B"), "beta", profiles_dir=isolated_profiles_dir)
+        save_profile(BuyerProfile(nickname="A"), "alpha", profiles_dir=isolated_profiles_dir)
+        save_profile(BuyerProfile(nickname="B"), "beta", profiles_dir=isolated_profiles_dir)
         _print_profile_list()
         out = capsys.readouterr().out
         assert "alpha" in out
@@ -186,24 +186,24 @@ class TestInitProfileWizard:
     def test_creates_profile_with_defaults(self, isolated_profiles_dir, capsys):
         """Pressing Enter on every prompt accepts defaults."""
         from main import _run_init_profile
-        # 8 inputs: nickname, risk, goal, budget, count, holding, life, notes
-        with patch("builtins.input", side_effect=[""] * 8):
+        # 11 inputs: nickname, commute, budget, own_funds, monthly, family,
+        #            preferred_area, preferred_size, preferred_type, move_in, notes
+        with patch("builtins.input", side_effect=[""] * 11):
             _run_init_profile("default")
         out = capsys.readouterr().out
         assert "프로필 저장" in out
-        # File should exist in our isolated dir
         assert (isolated_profiles_dir / "default.json").exists()
 
     def test_edits_existing_profile(self, isolated_profiles_dir, capsys):
         """Existing profile's values become defaults."""
-        from profiles import Profile, save_profile, load_profile
+        from profiles import BuyerProfile, save_profile, load_profile
         from main import _run_init_profile
         save_profile(
-            Profile(nickname="기존", budget_manwon=10000),
+            BuyerProfile(nickname="기존", budget_manwon=10000),
             "edit_me",
             profiles_dir=isolated_profiles_dir,
         )
-        with patch("builtins.input", side_effect=[""] * 8):
+        with patch("builtins.input", side_effect=[""] * 11):
             _run_init_profile("edit_me")
         out = capsys.readouterr().out
         assert "편집 모드" in out
@@ -216,46 +216,55 @@ class TestInitProfileWizard:
         from profiles import load_profile
         from main import _run_init_profile
         with patch("builtins.input", side_effect=[
-            "홍길동",         # nickname
-            "aggressive",     # risk_profile
-            "capital_gain",   # investment_goal
-            "60000",          # budget_manwon
-            "2",              # property_count
-            "10",             # holding_years
-            "preservation",   # life_stage
-            "강남 우선",      # notes
+            "홍길동",     # nickname
+            "판교",       # commute_location
+            "60000",      # budget_manwon
+            "20000",      # own_funds_manwon
+            "180",        # monthly_payment_manwon
+            "2",          # family_size
+            "마포구",     # preferred_area
+            "84",         # preferred_size_sqm
+            "apartment",  # preferred_type (valid choice)
+            "6",          # move_in_months
+            "강남 우선",  # notes
         ]):
             _run_init_profile("holguildong")
         loaded = load_profile("holguildong", profiles_dir=isolated_profiles_dir)
         assert loaded.nickname == "홍길동"
-        assert loaded.risk_profile == "aggressive"
-        assert loaded.investment_goal == "capital_gain"
+        assert loaded.commute_location == "판교"
         assert loaded.budget_manwon == 60000
-        assert loaded.property_count == 2
-        assert loaded.holding_years == 10
-        assert loaded.life_stage == "preservation"
+        assert loaded.own_funds_manwon == 20000
+        assert loaded.monthly_payment_manwon == 180
+        assert loaded.family_size == 2
+        assert loaded.preferred_area == "마포구"
+        assert loaded.preferred_size_sqm == 84.0
+        assert loaded.preferred_type == "apartment"
+        assert loaded.move_in_months == 6
         assert loaded.notes == "강남 우선"
 
     def test_rejects_invalid_choice_and_retries(self, isolated_profiles_dir, capsys):
-        """Invalid risk_profile value triggers a re-prompt."""
+        """Invalid preferred_type value triggers a re-prompt."""
         from profiles import load_profile
         from main import _run_init_profile
         with patch("builtins.input", side_effect=[
-            "",               # nickname (default)
-            "invalid",        # risk_profile (rejected)
-            "moderate",       # risk_profile (valid)
-            "",               # goal (default)
-            "",               # budget
-            "",               # count
-            "",               # holding
-            "",               # life
-            "",               # notes
+            "",           # nickname (default)
+            "",           # commute_location (default)
+            "",           # budget_manwon (default)
+            "",           # own_funds_manwon (default)
+            "",           # monthly_payment_manwon (default)
+            "",           # family_size (default)
+            "",           # preferred_area (default)
+            "",           # preferred_size_sqm (default)
+            "invalid",    # preferred_type (rejected)
+            "villa",      # preferred_type (valid)
+            "",           # move_in_months (default)
+            "",           # notes (default)
         ]):
             _run_init_profile("retry_test")
         out = capsys.readouterr().out
         assert "유효하지 않습니다" in out
         loaded = load_profile("retry_test", profiles_dir=isolated_profiles_dir)
-        assert loaded.risk_profile == "moderate"
+        assert loaded.preferred_type == "villa"
 
 
 class TestProfileArgs:
@@ -271,5 +280,5 @@ class TestProfileArgs:
         from main import main
         with patch("sys.argv", ["main.py", "--init-profile", "x"]), \
              patch.dict("os.environ", {}, clear=True), \
-             patch("builtins.input", side_effect=[""] * 8):
+             patch("builtins.input", side_effect=[""] * 11):
             main()

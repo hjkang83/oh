@@ -38,34 +38,34 @@ from file_parser import format_for_agents as format_files_for_agents  # noqa: E4
 from meeting import Meeting  # noqa: E402
 from pipeline import PipelineResult, run_pipeline  # noqa: E402
 from profiles import (  # noqa: E402
-    INVESTMENT_GOALS,
-    LIFE_STAGES,
-    RISK_PROFILES,
-    Profile,
+    SCHOOL_PRIORITY,
+    PROPERTY_TYPES as BUYER_PROPERTY_TYPES,
+    BuyerProfile,
     format_for_agents as format_profile_for_agents,
     list_profiles,
     load_profile,
     save_profile,
 )
+Profile = BuyerProfile  # backward-compat alias for rest of main.py
 from real_estate import REGION_CODES, PROPERTY_TYPES  # noqa: E402
 from tax import TaxParams  # noqa: E402
 
 
 BANNER = r"""
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-   🏢  Data 기반 Multi-Agent 부동산 투자 자문 시스템
+   🏠  생애 첫 주택 구매 Multi-Agent 자문 시스템
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  참석: 📊 CFO(재무총괄)  🔴 CSO(전략총괄)  🧭 투자컨설턴트(투자자문)  📝 비서실장
+  참석: 🎤 인터뷰어(MC)  🏠 중개사  💰 재무설계사  📊 시장분석가  📝 비서실장
   종료: /end  또는  quit
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
-DEMO_TOPIC = "강남 오피스텔 투자 검토"
-DEMO_REGIONS = ["강남구", "성동구", "강서구"]
+DEMO_TOPIC = "판교 출근 30대 부부 — 마포구 30평형 첫 주택 구매 검토"
+DEMO_REGIONS = ["마포구", "성동구", "용산구"]
 DEMO_SCRIPT = [
-    "강남 오피스텔 수익률 3%면 낮은 거 아냐?",
-    "월세 수익 목적이야. 대출 60% 끼고 월 150만원 정도 나오면 좋겠어.",
-    "그럼 강남 말고 성수나 마곡 쪽은 어때?",
+    "판교 출근인데 마포 쪽 30평형 아파트 6억으로 살 수 있을까요?",
+    "월 원리금이 225만원이면 너무 부담스러운데, 방법이 없을까요?",
+    "아현동 매물 하나 봤는데 호가가 6억 5천이래요. 이 가격 어떻게 봐요?",
 ]
 
 
@@ -99,7 +99,7 @@ def _load_profile_or_warn(name: str | None) -> Profile | None:
             print("   `--init-profile <이름>` 으로 새 프로필을 만들 수 있습니다.")
         return None
     print(f"👤 프로필 로드: '{name}' — {profile.nickname} · "
-          f"{profile.risk_label} · {profile.goal_label}")
+          f"예산 {profile.budget_manwon:,}만원 · 출근지 {profile.commute_location or '미입력'}")
     return profile
 
 
@@ -115,7 +115,7 @@ def _print_profile_list() -> None:
         if p is None:
             print(f"  • {name} (읽기 실패)")
             continue
-        print(f"  • {name} — {p.nickname} · {p.risk_label} · {p.goal_label}")
+        print(f"  • {name} — {p.nickname} · 예산 {p.budget_manwon:,}만원 · {p.commute_location or '출근지 미입력'}")
 
 
 def _ask(prompt: str, default: str) -> str:
@@ -158,22 +158,28 @@ def _run_init_profile(name: str = "default") -> None:
         base = Profile()
 
     nickname = _ask("닉네임", base.nickname)
-    risk_profile = _ask_choice("리스크 프로파일", RISK_PROFILES, base.risk_profile)
-    investment_goal = _ask_choice("투자 목적", INVESTMENT_GOALS, base.investment_goal)
-    budget_manwon = _ask_int("가용 예산 (만원, 0=미입력)", base.budget_manwon)
-    property_count = _ask_int("보유 주택 수 (0=무주택)", base.property_count)
-    holding_years = _ask_int("투자 시계 (년)", base.holding_years, min_val=1)
-    life_stage = _ask_choice("생애주기", LIFE_STAGES, base.life_stage)
+    commute_location = _ask("출근지 (예: 판교, 강남역, 재택)", base.commute_location)
+    budget_manwon = _ask_int("총 구매 예산 (만원, 0=미입력)", base.budget_manwon)
+    own_funds_manwon = _ask_int("자기자본 (만원, 0=미입력)", base.own_funds_manwon)
+    monthly_payment_manwon = _ask_int("월 원리금 감당 가능액 (만원, 0=미입력)", base.monthly_payment_manwon)
+    family_size = _ask_int("가족 수", base.family_size, min_val=1)
+    preferred_area = _ask("선호 지역 (예: 마포, 성동)", base.preferred_area)
+    preferred_size_sqm = float(_ask("선호 전용면적 (㎡, 0=미입력)", str(int(base.preferred_size_sqm))))
+    preferred_type = _ask_choice("선호 매물 유형", BUYER_PROPERTY_TYPES, base.preferred_type)
+    move_in_months = _ask_int("입주 희망 시기 (개월 후)", base.move_in_months, min_val=1)
     notes = _ask("메모 (선택, 자유 입력)", base.notes)
 
-    profile = Profile(
+    profile = BuyerProfile(
         nickname=nickname,
-        risk_profile=risk_profile,
-        investment_goal=investment_goal,
+        commute_location=commute_location,
         budget_manwon=budget_manwon,
-        property_count=property_count,
-        holding_years=holding_years,
-        life_stage=life_stage,
+        own_funds_manwon=own_funds_manwon,
+        monthly_payment_manwon=monthly_payment_manwon,
+        family_size=family_size,
+        preferred_area=preferred_area,
+        preferred_size_sqm=preferred_size_sqm,
+        preferred_type=preferred_type,
+        move_in_months=move_in_months,
         notes=notes,
     )
     path = save_profile(profile, name)
