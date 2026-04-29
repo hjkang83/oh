@@ -322,14 +322,14 @@ class TestBuildProSummary:
 
     def test_persona_block_rendered(self):
         turns = [
-            {"agent_key": "practitioner", "name": "CFO", "label": "재무총괄",
-             "emoji": "📊", "text": "호가 8.5억 vs P50 7.6억 [출처: 국토부]."},
-            {"agent_key": "redteam", "name": "CSO", "label": "전략총괄",
-             "emoji": "🔴", "text": "금리 시그널 부정적."},
+            {"agent_key": "financial", "name": "재무설계사", "label": "대출·자금 전문",
+             "emoji": "💰", "text": "호가 8.5억 vs P50 7.6억 [출처: 국토부]."},
+            {"agent_key": "analyst", "name": "시장분석가", "label": "가격·시장 분석",
+             "emoji": "📊", "text": "금리 시그널 부정적."},
         ]
         out = build_pro_summary(self._request(), self._dist(), turns)
-        assert "CFO" in out
-        assert "CSO" in out
+        assert "재무설계사" in out
+        assert "시장분석가" in out
         assert "호가 8.5억" in out
         assert "금리 시그널" in out
 
@@ -376,7 +376,7 @@ class TestPersonaContextAndPrompt:
     def test_prompt_includes_data_block_and_source(self):
         req, dist = self._setup()
         ctx = build_persona_context(req, dist)
-        prompt = build_persona_prompt("practitioner", ctx)
+        prompt = build_persona_prompt("financial", ctx)
         assert "85,000만원" in prompt or "8억" in prompt
         assert "P50" in prompt
         assert "국토교통부" in prompt
@@ -384,21 +384,21 @@ class TestPersonaContextAndPrompt:
     def test_prompt_role_guidance_per_agent(self):
         req, dist = self._setup()
         ctx = build_persona_context(req, dist)
-        cfo = build_persona_prompt("practitioner", ctx)
-        cso = build_persona_prompt("redteam", ctx)
-        consultant = build_persona_prompt("mentor", ctx)
-        assert "CFO" in cfo
-        assert "헤도닉" in cfo
-        assert "CSO" in cso
-        assert "타이밍" in cso
-        assert "투자컨설턴트" in consultant
-        assert "적합성" in consultant
+        financial = build_persona_prompt("financial", ctx)
+        analyst = build_persona_prompt("analyst", ctx)
+        broker = build_persona_prompt("broker", ctx)
+        assert "재무설계사" in financial
+        assert "헤도닉" in financial
+        assert "시장분석가" in analyst
+        assert "타이밍" in analyst
+        assert "부동산 중개사" in broker
+        assert "입지" in broker or "매물" in broker
 
-    def test_prompt_enforces_boundary_for_cfo(self):
+    def test_prompt_enforces_boundary_for_financial(self):
         req, dist = self._setup()
         ctx = build_persona_context(req, dist)
-        cfo = build_persona_prompt("practitioner", ctx)
-        assert "추천" in cfo or "타이밍" in cfo  # 금지 영역 명시
+        financial = build_persona_prompt("financial", ctx)
+        assert "추천" in financial or "타이밍" in financial  # 금지 영역 명시
 
     def test_low_sample_warning_in_prompt(self):
         req, _ = self._setup()
@@ -408,7 +408,7 @@ class TestPersonaContextAndPrompt:
             label="고평가", has_low_sample_warning=True,
         )
         ctx = build_persona_context(req, warned_dist)
-        prompt = build_persona_prompt("practitioner", ctx)
+        prompt = build_persona_prompt("financial", ctx)
         assert "신뢰구간" in prompt or "주의" in prompt
 
 
@@ -434,9 +434,9 @@ class TestAuditPropertyEndToEnd:
     async def _run(self, request, summary, persona_responses=None):
         if persona_responses is None:
             persona_responses = {
-                "practitioner": "CFO 응답: 호가 +12% 고평가 [출처: 국토교통부 실거래가 API].",
-                "redteam": "CSO 응답: 금리 시그널 검토 필요.",
-                "mentor": "투자컨설턴트 응답: 같은 가격대 대안 검토 권장.",
+                "broker": "중개사 응답: 같은 가격대 대안 검토 권장.",
+                "financial": "재무설계사 응답: 호가 +12% 고평가 [출처: 국토교통부 실거래가 API].",
+                "analyst": "시장분석가 응답: 금리 시그널 검토 필요.",
             }
 
         async def mock_caller(agent_key, ctx):
@@ -470,24 +470,24 @@ class TestAuditPropertyEndToEnd:
         )
         assert len(result.persona_turns) == 3
         keys = [t["agent_key"] for t in result.persona_turns]
-        assert "practitioner" in keys
-        assert "redteam" in keys
-        assert "mentor" in keys
+        assert "broker" in keys
+        assert "financial" in keys
+        assert "analyst" in keys
 
     def test_persona_text_in_pro_summary(self):
         result = asyncio.run(
             self._run(self._request(85000), self._summary_with_12_trades())
         )
-        assert "CFO 응답" in result.pro_summary
-        assert "CSO 응답" in result.pro_summary
+        assert "재무설계사 응답" in result.pro_summary
+        assert "시장분석가 응답" in result.pro_summary
 
     def test_persona_text_not_in_simple_summary(self):
         """simple 모드는 페르소나 인용을 절대 노출하지 않음 (clerk.md 가드)."""
         result = asyncio.run(
             self._run(self._request(85000), self._summary_with_12_trades())
         )
-        assert "CFO 응답" not in result.simple_summary
-        assert "CSO 응답" not in result.simple_summary
+        assert "재무설계사 응답" not in result.simple_summary
+        assert "시장분석가 응답" not in result.simple_summary
 
     def test_insufficient_sample_skips_personas(self):
         result = asyncio.run(
@@ -499,7 +499,7 @@ class TestAuditPropertyEndToEnd:
 
     def test_persona_failure_handled_gracefully(self):
         async def failing_caller(agent_key, ctx):
-            if agent_key == "redteam":
+            if agent_key == "analyst":
                 raise RuntimeError("LLM down")
             return f"{agent_key} 응답 정상"
 
@@ -512,11 +512,11 @@ class TestAuditPropertyEndToEnd:
 
         result = asyncio.run(go())
         assert len(result.persona_turns) == 3
-        cso_turn = next(t for t in result.persona_turns if t["agent_key"] == "redteam")
-        assert "실패" in cso_turn["text"]
+        analyst_turn = next(t for t in result.persona_turns if t["agent_key"] == "analyst")
+        assert "실패" in analyst_turn["text"]
         # 다른 페르소나는 정상 처리
-        cfo_turn = next(t for t in result.persona_turns if t["agent_key"] == "practitioner")
-        assert "정상" in cfo_turn["text"]
+        financial_turn = next(t for t in result.persona_turns if t["agent_key"] == "financial")
+        assert "정상" in financial_turn["text"]
 
     def test_simple_summary_always_jargon_free(self):
         """end-to-end 결과의 simple_summary가 통계 용어 가드를 통과하는지."""

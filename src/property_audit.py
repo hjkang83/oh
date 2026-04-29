@@ -366,20 +366,20 @@ def build_persona_prompt(agent_key: str, context: dict[str, Any]) -> str:
         )
 
     role_guidance = {
-        "practitioner": (
-            "CFO로서 응답하세요. 호가 적정성을 숫자 기준으로 평가합니다. "
-            "헤도닉 보정 미적용임을 명시하고, 수익률·세금 한계를 한 번 짚어주세요. "
+        "financial": (
+            "재무설계사로서 응답하세요. 호가 적정성을 숫자 기준으로 평가합니다. "
+            "헤도닉 보정 미적용임을 명시하고, 대출·취득세 영향을 한 번 짚어주세요. "
             "매물 추천이나 타이밍 판단은 금지."
         ),
-        "redteam": (
-            "CSO로서 응답하세요. 시장 타이밍·금리·정책 리스크 측면에서 본 호가 평가. "
+        "analyst": (
+            "시장분석가로서 응답하세요. 시장 타이밍·금리·정책 리스크 측면에서 본 호가 평가. "
             "이 가격이 향후 어떤 시장 시그널에 취약한지 1~2가지. "
             "수익률 계산이나 적합성 자문은 금지."
         ),
-        "mentor": (
-            "투자컨설턴트로서 응답하세요. 이 호가가 일반적인 갭투자/실거주 검토자에게 "
-            "어떤 의미인지 적합성 관점에서. 같은 가격대 대안 1~2개. "
-            "구체 수치 계산은 CFO에게 맡기세요."
+        "broker": (
+            "부동산 중개사로서 응답하세요. 이 호가가 실거주 구매자에게 "
+            "어떤 의미인지 입지·매물 상태 관점에서. 같은 가격대 대안 1~2개. "
+            "구체 수치 계산은 재무설계사에게 맡기세요."
         ),
     }
     base += role_guidance.get(agent_key, "당신의 페르소나 명세서에 따라 답변하세요.")
@@ -392,7 +392,7 @@ async def audit_property(
     *,
     persona_caller: PersonaCaller,
     fetch_summary: Callable[[str, str], RegionSummary] | None = None,
-    persona_keys: tuple[str, ...] = ("practitioner", "redteam", "mentor"),
+    persona_keys: tuple[str, ...] = ("broker", "financial", "analyst"),
 ) -> PropertyAuditResult:
     """End-to-end audit. persona_caller·fetch_summary는 테스트 시 주입.
 

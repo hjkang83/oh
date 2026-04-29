@@ -1,4 +1,8 @@
-"""Streamlit 채팅 UI — 부동산 투자 자문 시스템 웹 프론트엔드.
+"""Streamlit 채팅 UI — 생애 첫 주택 구매 자문 시스템 (3단계 플로우).
+
+Stage 1: MC 인터뷰 — 자연스러운 대화로 구매 조건 수집 → BuyerProfile
+Stage 2: 에이전트 자문 — 중개사·재무설계사·시장분석가 3인 병렬 응답
+Stage 3: 호가 적정성 — 특정 매물 P50 기반 적정가 평가
 
 Usage:
     streamlit run src/app.py
@@ -8,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 import streamlit as st
@@ -23,48 +26,37 @@ except ImportError:
 
 from meeting import Meeting
 from personas import AGENT_CONFIG
-from archive import list_meetings, build_followup_context
-from comparison import format_comparison_table_md, build_comparison_first_message
-from report import generate_pdf_report
 from profiles import (
-    INVESTMENT_GOALS,
-    LIFE_STAGES,
-    RISK_PROFILES,
-    Profile,
-    list_profiles,
-    load_profile,
-    save_profile,
+    PROPERTY_TYPES, SCHOOL_PRIORITY,
+    BuyerProfile, list_profiles, load_profile, save_profile,
+    format_for_agents as format_profile_for_agents,
 )
-from real_estate import REGION_CODES, REGION_GROUPS, PROPERTY_TYPES
-from file_parser import parse_file, SUPPORTED_EXTENSIONS
-from file_parser import format_for_agents as format_files_for_agents
-from yield_analyzer import InvestmentParams
-from scenario import rate_sensitivity, vacancy_sensitivity, price_sensitivity, stress_test
-from cashflow import CashFlowParams, build_multi_cashflow
-from monte_carlo import run_multi_monte_carlo
-from tax import TaxParams
-from pipeline import PipelineResult, run_pipeline
-from briefing import generate_ceo_briefing
-from manual import MANUAL_TEXT, FILE_SAMPLE_TEXT
-from charts import (
-    sensitivity_line_chart, stress_bar_chart, region_radar,
-    cashflow_chart, monte_carlo_histogram,
-    tax_comparison_chart, scorecard_chart, portfolio_scatter,
+from interview import (
+    InterviewSession, COMPLETE_THRESHOLD,
+    apply_heuristic_to_session, build_greeting, suggest_next_question,
 )
-from demo_mock import MOCK_TURNS, MOCK_MINUTES, DEMO_TOPIC, DEMO_REGIONS
+from property_audit import (
+    PropertyAuditRequest, audit_property,
+    build_simple_summary, build_pro_summary,
+    compute_price_distribution, filter_trades_for_complex,
+)
+from real_estate import REGION_CODES, get_region_data
+from archive import list_meetings
+from demo_mock import MOCK_TURNS, MOCK_MINUTES, DEMO_TOPIC, DEMO_REGIONS, DEMO_PROFILE_BLOCK
 
 
 st.set_page_config(
-    page_title="부동산 투자 자문 시스템",
-    page_icon="🏢",
+    page_title="🏠 생애 첫 주택 구매 자문",
+    page_icon="🏠",
     layout="wide",
 )
 
 AGENT_COLORS = {
-    "practitioner": "#1565C0",
-    "redteam": "#C62828",
-    "mentor": "#2E7D32",
+    "broker": "#1565C0",
+    "financial": "#2E7D32",
+    "analyst": "#C62828",
     "clerk": "#E65100",
+    "mc": "#6A1B9A",
 }
 
 
@@ -76,719 +68,512 @@ def _run_async(coro):
         loop.close()
 
 
-# ------------------------------------------------------------------
-# Sidebar: 회의 설정
-# ------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Session state 초기화
+# ──────────────────────────────────────────────────────────────────────────────
+
+if "interview" not in st.session_state:
+    sess = InterviewSession()
+    sess.add_assistant(build_greeting())
+    st.session_state["interview"] = sess
+
+if "advisory_msgs" not in st.session_state:
+    st.session_state["advisory_msgs"] = []  # list of {role, content, agent_key?}
+
+if "buyer_profile" not in st.session_state:
+    st.session_state["buyer_profile"] = None  # confirmed BuyerProfile
+
+if "meeting" not in st.session_state:
+    st.session_state["meeting"] = None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Sidebar
+# ──────────────────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.markdown("## 🏢 회의 설정")
+    st.markdown("## 🏠 구매 자문 설정")
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         api_key = st.text_input(
             "Anthropic API Key",
             type="password",
-            help="ANTHROPIC_API_KEY 환경변수 또는 .env 파일로도 설정 가능",
+            help="없으면 Mock 모드로 동작합니다",
         )
         if api_key:
             os.environ["ANTHROPIC_API_KEY"] = api_key
 
+    has_api = bool(os.getenv("ANTHROPIC_API_KEY"))
+    if has_api:
+        st.success("✅ API 연결됨")
+    else:
+        st.warning("⚠️ Mock 모드 (API 키 없음)")
+
     st.divider()
 
-    selected_profile: Profile | None = None
-    with st.expander("👤 사용자 프로필", expanded=False):
-        available_profiles = list_profiles()
-        sel_options = ["(사용 안 함)"] + available_profiles
-        sel_pick = st.selectbox(
-            "저장된 프로필",
-            options=sel_options,
-            help="회의 시작 시 투자컨설턴트에게 컨텍스트로 주입됩니다.",
-        )
-        if sel_pick != "(사용 안 함)":
-            selected_profile = load_profile(sel_pick)
-            if selected_profile:
-                st.markdown(
-                    f"**{selected_profile.nickname}** · "
-                    f"{selected_profile.risk_label} · "
-                    f"{selected_profile.goal_label}"
-                )
-                st.caption(
-                    f"예산 {selected_profile.budget_manwon:,}만원 · "
-                    f"{selected_profile.holding_years}년 보유 · "
-                    f"{selected_profile.life_stage_label}"
-                )
-                if selected_profile.notes:
-                    st.caption(f"📝 {selected_profile.notes}")
-
-        with st.expander("➕ 새로 만들기 / ✏️ 편집", expanded=False):
-            with st.form("profile_form", clear_on_submit=False):
-                base = selected_profile or Profile()
-                edit_name = st.text_input(
-                    "프로필 이름 (영문/숫자/언더스코어)",
-                    value=sel_pick if sel_pick != "(사용 안 함)" else "default",
-                )
-                form_nickname = st.text_input("닉네임", value=base.nickname)
-                risk_keys = list(RISK_PROFILES.keys())
-                form_risk = st.selectbox(
-                    "리스크 프로파일",
-                    options=risk_keys,
-                    index=risk_keys.index(base.risk_profile)
-                    if base.risk_profile in risk_keys else 1,
-                    format_func=lambda k: RISK_PROFILES[k],
-                )
-                goal_keys = list(INVESTMENT_GOALS.keys())
-                form_goal = st.selectbox(
-                    "투자 목적",
-                    options=goal_keys,
-                    index=goal_keys.index(base.investment_goal)
-                    if base.investment_goal in goal_keys else 0,
-                    format_func=lambda k: INVESTMENT_GOALS[k],
-                )
-                form_budget = st.number_input(
-                    "가용 예산 (만원, 0=미입력)",
-                    min_value=0, max_value=10_000_000,
-                    value=int(base.budget_manwon), step=1000,
-                )
-                form_count = st.number_input(
-                    "보유 주택 수 (0=무주택)",
-                    min_value=0, max_value=20,
-                    value=int(base.property_count), step=1,
-                )
-                form_holding = st.number_input(
-                    "투자 시계 (년)",
-                    min_value=1, max_value=30,
-                    value=int(base.holding_years), step=1,
-                )
-                life_keys = list(LIFE_STAGES.keys())
-                form_life = st.selectbox(
-                    "생애주기",
-                    options=life_keys,
-                    index=life_keys.index(base.life_stage)
-                    if base.life_stage in life_keys else 1,
-                    format_func=lambda k: LIFE_STAGES[k],
-                )
-                form_notes = st.text_area("메모 (선택)", value=base.notes, height=80)
-
-                if st.form_submit_button("💾 프로필 저장"):
-                    new_profile = Profile(
-                        nickname=form_nickname,
-                        risk_profile=form_risk,
-                        investment_goal=form_goal,
-                        budget_manwon=int(form_budget),
-                        property_count=int(form_count),
-                        holding_years=int(form_holding),
-                        life_stage=form_life,
-                        notes=form_notes,
-                    )
-                    path = save_profile(new_profile, edit_name)
-                    st.success(f"✅ 저장됨: `{path.name}`")
+    # ── 저장된 프로필 불러오기 ──
+    with st.expander("👤 저장된 프로필", expanded=False):
+        available = list_profiles()
+        if available:
+            picked = st.selectbox("불러오기", ["(선택 안 함)"] + available)
+            if picked != "(선택 안 함)":
+                p = load_profile(picked)
+                if p and st.button("이 프로필로 Stage 2 시작", use_container_width=True):
+                    st.session_state["buyer_profile"] = p
+                    st.session_state["advisory_msgs"] = []
                     st.rerun()
+        else:
+            st.caption("저장된 프로필이 없습니다.")
 
-    topic = st.text_input(
-        "📌 회의 안건",
-        placeholder="예: 강남 오피스텔 투자 검토",
-    )
-
-    property_type = st.radio(
-        "🏠 매물 유형",
-        options=["officetel", "apartment"],
-        format_func=lambda x: "오피스텔" if x == "officetel" else "아파트",
-        horizontal=True,
-    )
-
-    region_area = st.selectbox(
-        "🗺 지역 권역",
-        options=list(REGION_GROUPS.keys()),
-        index=0,
-    )
-    selected_regions = st.multiselect(
-        "📈 실거래 데이터 지역",
-        options=REGION_GROUPS[region_area],
-        default=[REGION_GROUPS[region_area][0]] if REGION_GROUPS[region_area] else [],
-        help=f"{region_area} 권역 {len(REGION_GROUPS[region_area])}개 지역 | 전체 {len(REGION_CODES)}개 지역 지원",
-    )
-
-    uploaded_files = st.file_uploader(
-        "📎 파일 업로드",
-        type=["xlsx", "xls", "pdf"],
-        accept_multiple_files=True,
-        help="매물 리스트(Excel), 계약서(PDF) 등",
-    )
-
-    with st.expander("🗣 토론 설정", expanded=False):
-        debate_mode = st.checkbox("에이전트 간 토론 모드", value=False,
-                                  help="에이전트가 서로의 의견에 반론·보충합니다")
-        debate_rounds = st.slider("토론 라운드", 1, 3, 2,
-                                  disabled=not debate_mode)
-        auto_challenge = st.checkbox("자동 반론 주입", value=True,
-                                     help="전원 합의 시 확증편향 방지 프롬프트")
-
-    with st.expander("⚙️ 투자 분석 조건", expanded=False):
-        ltv_pct = st.slider("LTV (대출비율 %)", 0, 80, 60, 5,
-                             help="매매가 대비 대출 비율 (시장 평균 약 60%)")
-        ltv = ltv_pct / 100.0
-        loan_rate = st.slider("대출금리 (연 %)", 2.0, 7.0, 4.0, 0.5,
-                               help="주담대 변동금리 기준 (2025 시장 평균 약 4%)")
-        vacancy = st.slider("연간 공실 (개월)", 0.0, 3.0, 1.0, 0.5,
-                             help="보수적 추정 1개월, 비역세권 1.5~2개월")
-        mgmt_fee = st.number_input("월 관리비 (만원)", 0, 100, 15, 1,
-                                    help="오피스텔 평균 10~20��원, 아파트 평균 20~30만원")
-
-    invest_params = InvestmentParams(
-        ltv=ltv,
-        loan_rate=loan_rate,
-        vacancy_months=vacancy,
-        mgmt_fee=mgmt_fee,
-    )
+    # ── 프로필 직접 편집 ──
+    with st.expander("✏️ 프로필 직접 편집", expanded=False):
+        with st.form("profile_form"):
+            base = st.session_state.get("buyer_profile") or BuyerProfile()
+            edit_name = st.text_input("저장 이름", value="default")
+            f_nickname = st.text_input("닉네임", value=base.nickname)
+            f_commute = st.text_input("출근지", value=base.commute_location)
+            f_budget = st.number_input(
+                "총 예산 (만원)", 0, 200_000, base.budget_manwon, 1000,
+            )
+            f_own = st.number_input(
+                "자기자본 (만원)", 0, 100_000, base.own_funds_manwon, 1000,
+            )
+            f_monthly = st.number_input(
+                "월 원리금 한도 (만원)", 0, 1000, base.monthly_payment_manwon, 10,
+            )
+            f_family = st.number_input("가족 수", 1, 10, max(1, base.family_size), 1)
+            f_area = st.text_input("선호 지역", value=base.preferred_area)
+            f_size = st.number_input(
+                "선호 면적 (㎡)", 0.0, 300.0, float(base.preferred_size_sqm), 1.0,
+            )
+            f_type = st.selectbox(
+                "매물 유형",
+                list(PROPERTY_TYPES.keys()),
+                index=list(PROPERTY_TYPES.keys()).index(base.preferred_type)
+                if base.preferred_type in PROPERTY_TYPES else 0,
+                format_func=lambda k: PROPERTY_TYPES[k],
+            )
+            f_months = st.number_input("입주 시기 (개월 후)", 1, 60, base.move_in_months, 1)
+            f_notes = st.text_area("메모", value=base.notes, height=60)
+            if st.form_submit_button("💾 저장 + Stage 2 시작"):
+                new_p = BuyerProfile(
+                    nickname=f_nickname, commute_location=f_commute,
+                    budget_manwon=int(f_budget), own_funds_manwon=int(f_own),
+                    monthly_payment_manwon=int(f_monthly), family_size=int(f_family),
+                    preferred_area=f_area, preferred_size_sqm=float(f_size),
+                    preferred_type=f_type, move_in_months=int(f_months), notes=f_notes,
+                )
+                save_profile(new_p, edit_name)
+                st.session_state["buyer_profile"] = new_p
+                st.session_state["advisory_msgs"] = []
+                st.rerun()
 
     st.divider()
 
-    col1, col2 = st.columns(2)
-    start_btn = col1.button("🚀 회의 시작", type="primary", use_container_width=True)
-    end_btn = col2.button("📝 회의 종료", use_container_width=True)
-
-    if st.button("🗑 새 회의", use_container_width=True):
-        for key in ["meeting", "messages", "finalized", "minutes", "mock_mode"]:
-            st.session_state.pop(key, None)
+    # ── Mock 데모 ──
+    if st.button("🎭 Mock 데모 실행", use_container_width=True,
+                 help="API 없이 Gold Standard 기반 시연"):
+        st.session_state["mock_mode"] = True
         st.rerun()
 
-    mock_btn = st.button("🎭 Mock 데모", use_container_width=True,
-                         help="API 키 없이 Gold Standard 기반 데모를 실행합니다")
+    # ── 초기화 ──
+    if st.button("🔄 전체 초기화", use_container_width=True):
+        for k in ["interview", "advisory_msgs", "buyer_profile", "meeting", "mock_mode"]:
+            st.session_state.pop(k, None)
+        st.rerun()
 
     st.divider()
-    st.caption("참석자")
-    for key in ["practitioner", "redteam", "mentor"]:
-        cfg = AGENT_CONFIG[key]
-        st.markdown(f"{cfg['emoji']} **{cfg['name']}** ({cfg['label']})")
 
-    st.divider()
-    help_col1, help_col2 = st.columns(2)
-    manual_btn = help_col1.button("📖 사용 매뉴얼", use_container_width=True)
-    sample_btn = help_col2.button("📎 파일 양식", use_container_width=True)
-
-    past_meetings = list_meetings(include_mock=True)
-    if past_meetings:
-        with st.expander(f"📚 과거 회의록 ({len(past_meetings)}건)", expanded=False):
-            for m in past_meetings[:10]:
-                date_str = f"{m.date} {m.time}".strip()
-                st.markdown(f"**{m.topic}**  \n{date_str}")
+    # ── 과거 상담록 ──
+    past = list_meetings(include_mock=True)
+    if past:
+        with st.expander(f"📚 과거 상담록 ({len(past)}건)", expanded=False):
+            for m in past[:8]:
+                st.markdown(f"**{m.topic}**  \n{m.date} {m.time}")
                 if m.summary:
-                    st.caption(m.summary[:100] + ("..." if len(m.summary) > 100 else ""))
-                if st.button("팔로우업 시작", key=f"followup_{m.path.name}",
-                             use_container_width=True):
-                    st.session_state["followup_source"] = m
-                    st.rerun()
+                    st.caption(m.summary[:80] + "…")
                 st.divider()
 
 
-# ------------------------------------------------------------------
-# 회의 시작
-# ------------------------------------------------------------------
+# ──────────────────────────────────────────────────────────────────────────────
+# Mock 모드 처리 (별도 화면)
+# ──────────────────────────────────────────────────────────────────────────────
 
-if start_btn:
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        st.error("❌ Anthropic API Key를 먼저 설정해 주세요.")
-        st.stop()
-    if not topic:
-        st.error("❌ 회의 안건을 입력해 주세요.")
-        st.stop()
+if st.session_state.get("mock_mode"):
+    st.markdown("# 🎭 Mock 데모 — Gold Standard 기반 시연")
+    st.info("실제 API 없이 Gold Standard 응답을 재생합니다.")
 
-    p = PipelineResult()
-    if selected_regions:
-        try:
-            with st.status("데이터 분석 중...", expanded=True) as status:
-                status.update(label="📈 실거래 데이터 로딩 중...")
-                p = run_pipeline(
-                    selected_regions,
-                    invest_params=invest_params,
-                    property_type=property_type,
-                )
-                status.update(label="✅ 분석 완료", state="complete", expanded=False)
-        except Exception as e:
-            st.warning(f"⚠️ 데이터 분석 중 오류가 발생했습니다: {e}\n샘플 데이터로 계속합니다.")
-    market_data = p.market_text
-    yield_data = p.yield_text
-    scenario_data = p.scenario_text
-    cashflow_data = p.cashflow_text
-    mc_data = p.mc_text
-    tax_data = p.tax_text
-    score_data = p.score_text
-    port_data = p.port_text
+    st.markdown("### 📌 안건")
+    st.markdown(f"**{DEMO_TOPIC}**")
+    st.markdown(f"검토 지역: {', '.join(DEMO_REGIONS)}")
 
-    file_data = ""
-    if uploaded_files:
-        file_texts: list[tuple[str, str]] = []
-        for uf in uploaded_files:
-            suffix = Path(uf.name).suffix
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(uf.getvalue())
-                tmp_path = tmp.name
-            try:
-                text = parse_file(tmp_path)
-                file_texts.append((uf.name, text))
-            except Exception as e:
-                st.warning(f"⚠️ {uf.name} 파싱 실패: {e}")
-            finally:
-                os.unlink(tmp_path)
-        if file_texts:
-            file_data = format_files_for_agents(file_texts)
-
-    # ── 팔로우업: 원본 회의록을 past_context로 주입 ──────────────────
-    followup_extra_context = ""
-    followup_source = st.session_state.pop("followup_source", None)
-    if followup_source is not None:
-        followup_extra_context = build_followup_context(followup_source)
-
-    all_data = "\n".join(filter(None, [
-        market_data, yield_data, scenario_data, cashflow_data, mc_data,
-        tax_data, score_data, port_data,
-    ]))
-    meeting = Meeting(
-        topic,
-        profile=selected_profile,
-        past_context=followup_extra_context,
-        market_data=market_data,
-        yield_data=yield_data,
-        scenario_data=all_data,
-        file_data=file_data,
-    )
-    meeting.auto_challenge = auto_challenge
-    st.session_state["meeting"] = meeting
-    st.session_state["messages"] = []
-    st.session_state["finalized"] = False
-    st.session_state["debate_mode"] = debate_mode
-    st.session_state["debate_rounds"] = debate_rounds
-    st.session_state["analyses"] = p.analyses
-    st.session_state["summaries"] = p.summaries
-    st.session_state["cf_tables"] = p.cf_tables
-    st.session_state["mc_results"] = p.mc_results
-    st.session_state["tax_summaries"] = p.tax_summaries
-    st.session_state["scorecards"] = p.scorecards
-    st.session_state["portfolios"] = p.portfolios
-    # ── 지역 비교: 2개 이상 선택 시 비교 모드 표시 플래그 ────────────
-    st.session_state["comparison_mode"] = len(selected_regions) >= 2
-
-    briefing_text = generate_ceo_briefing(p, topic)
-    st.session_state["briefing"] = briefing_text
-
-    init_msgs: list[dict] = []
-    if briefing_text:
-        init_msgs.append({"role": "system", "content": briefing_text, "type": "briefing"})
-    if market_data:
-        init_msgs.append({"role": "system", "content": market_data, "type": "market"})
-    if yield_data:
-        init_msgs.append({"role": "system", "content": yield_data, "type": "yield"})
-    if scenario_data:
-        init_msgs.append({"role": "system", "content": scenario_data, "type": "scenario"})
-    if cashflow_data:
-        init_msgs.append({"role": "system", "content": cashflow_data, "type": "cashflow"})
-    if mc_data:
-        init_msgs.append({"role": "system", "content": mc_data, "type": "montecarlo"})
-    if tax_data:
-        init_msgs.append({"role": "system", "content": tax_data, "type": "tax"})
-    if score_data:
-        init_msgs.append({"role": "system", "content": score_data, "type": "scorecard"})
-    if port_data:
-        init_msgs.append({"role": "system", "content": port_data, "type": "portfolio"})
-    if file_data:
-        init_msgs.append({"role": "system", "content": file_data, "type": "file"})
-
-    # ── 팔로우업 배지 ────────────────────────────────────────────────
-    if followup_extra_context:
-        init_msgs.append({
-            "role": "system",
-            "content": followup_extra_context,
-            "type": "followup",
-        })
-
-    st.session_state["messages"] = init_msgs
-    st.rerun()
-
-
-# ------------------------------------------------------------------
-# Mock 데모 모드
-# ------------------------------------------------------------------
-
-if mock_btn:
-    from datetime import datetime
-
-    mp = run_pipeline(DEMO_REGIONS)
-
-    meeting = Meeting(DEMO_TOPIC, market_data=mp.market_text,
-                      yield_data=mp.yield_text, scenario_data=mp.scenario_text)
-    st.session_state["meeting"] = meeting
-    st.session_state["mock_mode"] = True
-    st.session_state["finalized"] = False
-    st.session_state["analyses"] = mp.analyses
-    st.session_state["summaries"] = mp.summaries
-    st.session_state["cf_tables"] = mp.cf_tables
-    st.session_state["mc_results"] = mp.mc_results
-    st.session_state["tax_summaries"] = mp.tax_summaries
-    st.session_state["scorecards"] = mp.scorecards
-    st.session_state["portfolios"] = mp.portfolios
-
-    mock_briefing = generate_ceo_briefing(mp, DEMO_TOPIC)
-    st.session_state["briefing"] = mock_briefing
-
-    msgs: list[dict] = []
-    if mock_briefing:
-        msgs.append({"role": "system", "content": mock_briefing, "type": "briefing"})
-    if mp.market_text:
-        msgs.append({"role": "system", "content": mp.market_text, "type": "market"})
-    if mp.yield_text:
-        msgs.append({"role": "system", "content": mp.yield_text, "type": "yield"})
-    if mp.scenario_text:
-        msgs.append({"role": "system", "content": mp.scenario_text, "type": "scenario"})
-
-    for turn in MOCK_TURNS:
-        msgs.append({"role": "user", "content": turn["user"]})
-        for key in ("practitioner", "redteam", "mentor"):
-            msgs.append({"role": "agent", "agent_key": key, "content": turn[key]})
-
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-    minutes_text = MOCK_MINUTES.format(timestamp=timestamp)
-    msgs.append({"role": "minutes", "content": minutes_text})
-
-    st.session_state["messages"] = msgs
-    st.session_state["finalized"] = True
-    st.rerun()
-
-
-# ------------------------------------------------------------------
-# 메인 채팅 영역
-# ------------------------------------------------------------------
-
-st.markdown("## 🏢 Data 기반 Multi-Agent 부동산 투자 자문 시스템")
-
-# ------------------------------------------------------------------
-# 매뉴얼 / 파일 양식 표시
-# ------------------------------------------------------------------
-
-if manual_btn:
-    st.session_state["show_manual"] = not st.session_state.get("show_manual", False)
-    st.session_state["show_sample"] = False
-if sample_btn:
-    st.session_state["show_sample"] = not st.session_state.get("show_sample", False)
-    st.session_state["show_manual"] = False
-
-if st.session_state.get("show_manual"):
-    st.markdown(MANUAL_TEXT)
     st.divider()
+    st.markdown("### 🎤 MC 인터뷰 결과 (프로필)")
+    st.code(DEMO_PROFILE_BLOCK, language=None)
 
-if st.session_state.get("show_sample"):
-    st.markdown(FILE_SAMPLE_TEXT)
     st.divider()
-
-meeting: Meeting | None = st.session_state.get("meeting")
-
-if meeting is None:
-    st.markdown(
-        "3명의 AI C-suite(CFO · CSO · 투자컨설턴트)가 **실거래 데이터 기반**으로 "
-        "부동산 투자를 토론하며 의사결정을 돕습니다."
-    )
-    hero_cols = st.columns([1, 1, 1])
-    hero_cols[0].metric("분석 권역", f"{len(REGION_CODES)}개 전국")
-    hero_cols[1].metric("분석 모듈", "8종 (수익률·세금·MC 등)")
-    hero_cols[2].metric("AI 에이전트", "3명 + 비서실장")
-    st.divider()
-    st.markdown("#### 시작하기")
-    start_cols = st.columns(2)
-    start_cols[0].markdown(
-        "**API 모드** — 사이드바에서 안건 입력 후 `회의 시작`"
-    )
-    start_cols[1].markdown(
-        "**데모 모드** — API 키 없이 즉시 체험 → 사이드바 `Mock 데모`"
-    )
-    st.stop()
-
-mock_label = "  |  🎭 Mock 데모" if st.session_state.get("mock_mode") else ""
-st.caption(f"📌 안건: {meeting.topic}  |  🗂 세션: {meeting.session_id}{mock_label}")
-
-messages = st.session_state.get("messages", [])
-
-for msg in messages:
-    if msg["role"] == "system":
-        msg_type = msg.get("type", "")
-        if msg_type == "briefing":
-            with st.expander("📋 CEO 사전 브리핑 보고서", expanded=True):
-                st.markdown(msg["content"])
-            continue
-        if msg_type == "followup":
-            st.info("팔로우업 모드: 원본 회의록을 기반으로 현재 시점 분석을 진행합니다.", icon="🔄")
-            continue
-        type_labels = {
-            "market": "📈 실거래 데이터",
-            "yield": "📊 수익률 분석",
-            "scenario": "🔮 시나리오 시뮬레이션",
-            "cashflow": "💰 10년 현금흐름",
-            "montecarlo": "🎲 Monte Carlo",
-            "tax": "🏛 세금 시뮬레이션",
-            "scorecard": "📋 투자 스코어카드",
-            "portfolio": "📦 포트폴리오 분석",
-            "file": "📎 업로드 파일",
-        }
-        label = type_labels.get(msg_type, "📋 데이터")
-        with st.expander(label, expanded=False):
-            st.text(msg["content"])
-    elif msg["role"] == "user":
-        with st.chat_message("user", avatar="🧑"):
-            st.markdown(msg["content"])
-    elif msg["role"] == "agent":
-        key = msg.get("agent_key", "")
-        cfg = AGENT_CONFIG.get(key, {})
-        avatar = cfg.get("emoji", "🤖")
-        name = cfg.get("name", "Agent")
-        label = cfg.get("label", "")
-        color = AGENT_COLORS.get(key, "#666")
-        with st.chat_message("assistant", avatar=avatar):
-            st.markdown(
-                f"<span style='color:{color};font-weight:bold;'>"
-                f"{name}({label})</span>",
-                unsafe_allow_html=True,
-            )
-            st.markdown(msg["content"])
-            warnings = msg.get("warnings", [])
-            if warnings:
-                with st.expander(
-                    f"⚠️ 출처 누락 {len(warnings)}건 (Phase B 가드)",
-                    expanded=False,
-                ):
-                    for w in warnings:
-                        st.caption(f"• {w}")
-    elif msg["role"] == "minutes":
-        st.divider()
-        st.markdown("### 📝 회의록")
-        st.markdown(msg["content"])
-
-# ------------------------------------------------------------------
-# 차트 시각화
-# ------------------------------------------------------------------
-
-analyses_data = st.session_state.get("analyses", [])
-summaries_data = st.session_state.get("summaries", [])
-
-if analyses_data:
-    with st.expander("📊 시각화 차트", expanded=True):
-        chart_tabs = st.tabs([
-            "권역 비교", "민감도", "스트레스", "현금흐름",
-            "Monte Carlo", "세금", "스코어카드", "포트폴리오",
-        ])
-        with chart_tabs[0]:
-            st.plotly_chart(region_radar(analyses_data), use_container_width=True)
-        with chart_tabs[1]:
-            for s in summaries_data[:2]:
-                rt = rate_sensitivity(s, invest_params)
-                if rt:
-                    st.plotly_chart(sensitivity_line_chart(rt), use_container_width=True)
-        with chart_tabs[2]:
-            tests = [stress_test(s, invest_params) for s in summaries_data]
-            tests = [t for t in tests if t]
-            if tests:
-                st.plotly_chart(stress_bar_chart(tests), use_container_width=True)
-        with chart_tabs[3]:
-            cf_tables_data = st.session_state.get("cf_tables", [])
-            if not cf_tables_data:
-                cf_tables_data = build_multi_cashflow(analyses_data)
-            for t in cf_tables_data[:2]:
-                st.plotly_chart(cashflow_chart(t), use_container_width=True)
-        with chart_tabs[4]:
-            mc_data_cached = st.session_state.get("mc_results", [])
-            if not mc_data_cached:
-                mc_data_cached = run_multi_monte_carlo(analyses_data)
-            for r in mc_data_cached:
-                if r.n_simulations > 0:
-                    st.plotly_chart(monte_carlo_histogram(r), use_container_width=True)
-        with chart_tabs[5]:
-            tax_data_cached = st.session_state.get("tax_summaries", [])
-            if tax_data_cached:
-                st.plotly_chart(tax_comparison_chart(tax_data_cached), use_container_width=True)
-                for s in tax_data_cached:
-                    with st.container():
-                        st.markdown(f"**{s.region}** — 총 세금 {s.total_tax:,.0f}만원 (실효세율 {s.effective_tax_rate_pct}%)")
-                        cols = st.columns(3)
-                        cols[0].metric("취득세", f"{s.acquisition.amount:,.0f}만원", f"{s.acquisition.rate_pct}%")
-                        cols[1].metric("보유세(연)", f"{s.holding.total_annual:,.0f}만원")
-                        cols[2].metric("세후 순이익", f"{s.net_gain_after_tax:,.0f}만원")
-            else:
-                st.info("세금 분석 데이터가 없습니다. 회의 시작 시 자동으로 계산됩니다.")
-        with chart_tabs[6]:
-            score_data_cached = st.session_state.get("scorecards", [])
-            if score_data_cached:
-                st.plotly_chart(scorecard_chart(score_data_cached), use_container_width=True)
-                for card in score_data_cached:
-                    verdict_colors = {"투자 추천": "green", "조건부 추천": "orange", "대기": "gray", "패스": "red"}
-                    color = verdict_colors.get(card.verdict, "gray")
-                    st.markdown(
-                        f"**{card.region}** — "
-                        f"<span style='color:{color};font-weight:bold;'>{card.verdict}</span> "
-                        f"({card.total_score}/{card.max_possible}점)",
-                        unsafe_allow_html=True,
-                    )
-                    if card.key_strengths:
-                        st.markdown(f"  - 강점: {'; '.join(card.key_strengths)}")
-                    if card.key_risks:
-                        st.markdown(f"  - 리스크: {'; '.join(card.key_risks)}")
-            else:
-                st.info("스코어카드 데이터가 없습니다. 회의 시작 시 자동으로 계산됩니다.")
-        with chart_tabs[7]:
-            port_data_cached = st.session_state.get("portfolios", [])
-            if port_data_cached:
-                st.plotly_chart(portfolio_scatter(port_data_cached), use_container_width=True)
-                best = max(port_data_cached, key=lambda c: c.result.portfolio_irr)
-                safest = min(port_data_cached, key=lambda c: c.result.portfolio_std)
-                st.markdown(f"**수익 최적**: {best.combo_label} (IRR {best.result.portfolio_irr:.1f}%)")
-                st.markdown(f"**안정 최적**: {safest.combo_label} (변동성 {safest.result.portfolio_std:.1f}%)")
-            else:
-                st.info("포트폴리오 비교를 위해 2개 이상 지역을 선택해 주세요.")
-
-# ------------------------------------------------------------------
-# 지역 비교 테이블 (2개 이상 스코어카드 존재 시)
-# ------------------------------------------------------------------
-
-if st.session_state.get("comparison_mode"):
-    score_data_cached = st.session_state.get("scorecards", [])
-    if len(score_data_cached) >= 2:
-        with st.expander("📊 지역 비교 분석", expanded=True):
-            cmp_table = format_comparison_table_md(score_data_cached)
-            if cmp_table:
-                st.markdown(cmp_table)
-            first_q = build_comparison_first_message(
-                [c.region for c in score_data_cached]
-            )
-            st.caption(f"💬 추천 질문: {first_q}")
-            if st.button("이 질문으로 비교 토론 시작"):
-                st.session_state.setdefault("messages", [])
-                st.session_state["_pending_comparison_q"] = first_q
-                st.rerun()
-
-# ------------------------------------------------------------------
-# 회의 종료 → 회의록 생성
-# ------------------------------------------------------------------
-
-if end_btn and meeting and not st.session_state.get("finalized"):
-    user_turns = [m for m in messages if m["role"] == "user"]
-    if not user_turns:
-        st.warning("⚠️ 아직 대화가 없습니다. 먼저 발언해 주세요.")
-    else:
-        with st.spinner("📝 비서실장이 회의록을 정리하는 중..."):
-            try:
-                minutes_text, path = _run_async(meeting.finalize())
-                st.session_state["finalized"] = True
-                st.session_state["minutes"] = minutes_text
-                messages.append({"role": "minutes", "content": minutes_text})
-                st.session_state["messages"] = messages
-                st.success(f"✅ 회의록 저장: {path}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ 회의록 생성 실패: {e}")
-
-# ------------------------------------------------------------------
-# PDF 다운로드 (회의 종료 후)
-# ------------------------------------------------------------------
-
-if st.session_state.get("finalized") and meeting:
-    minutes_saved = st.session_state.get("minutes", "")
-    scorecards_saved = st.session_state.get("scorecards", [])
-    agent_msgs = [m for m in messages if m["role"] == "agent"]
-    highlights = [
-        {
-            "label": f"{AGENT_CONFIG.get(m.get('agent_key',''), {}).get('name','Agent')} ({AGENT_CONFIG.get(m.get('agent_key',''), {}).get('label','')})",
-            "text": m.get("content", ""),
-        }
-        for m in agent_msgs[:6]
-    ]
-    if st.button("📄 PDF 리포트 다운로드", use_container_width=True):
-        with st.spinner("PDF 생성 중..."):
-            try:
-                pdf_bytes = generate_pdf_report(
-                    topic=meeting.topic,
-                    started_at=meeting.started_at,
-                    scorecards=scorecards_saved,
-                    minutes_text=minutes_saved,
-                    agent_highlights=highlights,
-                )
-                filename = f"report_{meeting.started_at.strftime('%Y%m%d_%H%M')}.pdf"
-                st.download_button(
-                    label="⬇️ PDF 저장",
-                    data=pdf_bytes,
-                    file_name=filename,
-                    mime="application/pdf",
-                    use_container_width=True,
-                )
-            except Exception as e:
-                st.error(f"❌ PDF 생성 실패: {e}")
-
-# ------------------------------------------------------------------
-# 채팅 입력
-# ------------------------------------------------------------------
-
-if not st.session_state.get("finalized"):
-    # 비교 토론 자동 질문 처리
-    pending_q = st.session_state.pop("_pending_comparison_q", None)
-    if pending_q and meeting:
-        messages.append({"role": "user", "content": pending_q})
-        with st.spinner("에이전트 비교 분석 중..."):
-            try:
-                turns = _run_async(meeting.user_says(pending_q))
-            except Exception as e:
-                st.error(f"❌ 비교 토론 실패: {e}")
-                turns = []
-        for turn in turns:
-            key = turn["agent_key"]
-            messages.append({"role": "agent", "agent_key": key, "content": turn["text"]})
-        st.session_state["messages"] = messages
-        st.rerun()
-
-    if user_input := st.chat_input("대표님, 말씀하세요..."):
-        messages.append({"role": "user", "content": user_input})
-
-        with st.chat_message("user", avatar="🧑"):
-            st.markdown(user_input)
-
-        use_debate = st.session_state.get("debate_mode", False)
-        n_rounds = st.session_state.get("debate_rounds", 2)
-
-        try:
-            if use_debate and n_rounds > 1:
-                with st.spinner(f"에이전트 토론 중 ({n_rounds} 라운드)..."):
-                    all_rounds = _run_async(
-                        meeting.user_says_with_debate(user_input, rounds=n_rounds)
-                    )
-                turns = [t for rnd in all_rounds for t in rnd]
-            else:
-                with st.spinner("에이전트 응답 생성 중..."):
-                    turns = _run_async(meeting.user_says(user_input))
-        except Exception as e:
-            st.error(f"❌ 에이전트 응답 생성 실패: {e}")
-            st.info("API 키를 확인하거나, 네트워크 연결 상태를 점검해 주세요.")
-            turns = []
-
-        for turn in turns:
-            key = turn["agent_key"]
+    st.markdown("### 💬 에이전트 자문 대화")
+    for i, turn in enumerate(MOCK_TURNS, 1):
+        st.markdown(f"**Turn {i}**")
+        st.chat_message("user").write(turn["user"])
+        cols = st.columns(3)
+        for col, key in zip(cols, ("broker", "financial", "analyst")):
             cfg = AGENT_CONFIG[key]
-            color = AGENT_COLORS.get(key, "#666")
-            warnings = turn.get("warnings", [])
-            msg_data = {
-                "role": "agent",
-                "agent_key": key,
-                "content": turn["text"],
-                "warnings": warnings,
-            }
-            messages.append(msg_data)
-
-            with st.chat_message("assistant", avatar=cfg["emoji"]):
+            with col:
                 st.markdown(
-                    f"<span style='color:{color};font-weight:bold;'>"
-                    f"{cfg['name']}({cfg['label']})</span>",
+                    f"<div style='border-left:4px solid {AGENT_COLORS[key]};padding:8px'>"
+                    f"<b>{cfg['emoji']} {cfg['name']}</b><br>{turn[key]}</div>",
                     unsafe_allow_html=True,
                 )
-                st.markdown(turn["text"])
-                if warnings:
-                    with st.expander(
-                        f"⚠️ 출처 누락 {len(warnings)}건 (Phase B 가드)",
-                        expanded=False,
-                    ):
-                        for w in warnings:
-                            st.caption(f"• {w}")
+        st.divider()
 
-        st.session_state["messages"] = messages
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+    st.markdown("### 📝 상담록 (비서실장)")
+    st.markdown(MOCK_MINUTES.format(timestamp=ts))
+    st.stop()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 메인 탭
+# ──────────────────────────────────────────────────────────────────────────────
+
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🎤 Stage 1: MC 인터뷰",
+    "💬 Stage 2: 에이전트 자문",
+    "🔍 Stage 3: 호가 적정성",
+    "📝 상담록",
+])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 1: MC 인터뷰
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab1:
+    sess: InterviewSession = st.session_state["interview"]
+
+    st.markdown("## 🎤 MC 인터뷰")
+    st.caption("MC가 몇 가지를 여쭤보면서 맞춤 자문을 준비합니다. 편하게 대화하세요.")
+
+    # 완성도 표시
+    score = sess.completeness_score()
+    col_prog, col_btn = st.columns([3, 1])
+    with col_prog:
+        st.progress(
+            score / 100,
+            text=f"프로필 완성도 {score}% (Stage 2 진입 기준: {COMPLETE_THRESHOLD}%)",
+        )
+    with col_btn:
+        if sess.is_complete or score >= COMPLETE_THRESHOLD:
+            if st.button("▶ Stage 2 자문 시작", type="primary", use_container_width=True):
+                st.session_state["buyer_profile"] = sess.profile
+                st.session_state["advisory_msgs"] = []
+                st.success("✅ 프로필 확정. Stage 2 탭으로 이동하세요.")
+
+    # 대화 히스토리 표시
+    for turn in sess.turns:
+        role = "user" if turn.role == "user" else "assistant"
+        with st.chat_message(role):
+            st.write(turn.text)
+
+    # 현재 프로필 미리보기
+    if score > 0:
+        with st.expander("📋 현재 수집된 프로필", expanded=False):
+            st.text(format_profile_for_agents(sess.profile) or "(아직 수집 중)")
+
+    # 채팅 입력
+    user_input = st.chat_input("메시지를 입력하세요…")
+    if user_input:
+        sess.add_user(user_input)
+
+        with st.chat_message("user"):
+            st.write(user_input)
+
+        # MC 응답 생성
+        with st.chat_message("assistant"):
+            with st.spinner("MC가 응답 중..."):
+                if has_api:
+                    from personas import build_system_prompt
+                    from anthropic import AsyncAnthropic
+
+                    async def _mc_reply():
+                        client = AsyncAnthropic()
+                        hint = suggest_next_question(sess)
+                        hint_line = (
+                            f"\n\n[내부 가이드] 다음 수집 항목: {hint}" if hint else ""
+                        )
+                        resp = await client.messages.create(
+                            model="claude-sonnet-4-6",
+                            max_tokens=300,
+                            system=build_system_prompt("mc") + hint_line,
+                            messages=sess.build_api_messages(),
+                        )
+                        return resp.content[0].text
+
+                    mc_text = _run_async(_mc_reply())
+                else:
+                    # Mock: 순서대로 질문
+                    hint = suggest_next_question(sess)
+                    mc_text = hint or "감사합니다! 충분한 정보를 수집했어요. Stage 2에서 자문을 시작하세요."
+
+                sess.add_assistant(mc_text)
+                st.write(mc_text)
+
+        # 휴리스틱으로 프로필 갱신
+        apply_heuristic_to_session(sess)
+        st.session_state["interview"] = sess
+        st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 2: 에이전트 자문
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab2:
+    buyer_profile: BuyerProfile | None = st.session_state.get("buyer_profile")
+    advisory_msgs: list[dict] = st.session_state["advisory_msgs"]
+
+    st.markdown("## 💬 에이전트 자문 패널")
+
+    if buyer_profile is None:
+        st.info("👆 Stage 1 MC 인터뷰를 완료하면 자동으로 프로필이 설정됩니다.  \n"
+                "또는 사이드바에서 저장된 프로필을 불러오거나 직접 편집하세요.")
+        st.stop()
+
+    # 프로필 요약
+    with st.expander("👤 구매 조건 프로필", expanded=True):
+        st.markdown(format_profile_for_agents(buyer_profile))
+
+    st.divider()
+
+    # 에이전트 헤더
+    broker_cfg = AGENT_CONFIG["broker"]
+    fin_cfg = AGENT_CONFIG["financial"]
+    ana_cfg = AGENT_CONFIG["analyst"]
+    hdr_b, hdr_f, hdr_a = st.columns(3)
+    hdr_b.markdown(
+        f"<b style='color:{AGENT_COLORS['broker']}'>{broker_cfg['emoji']} {broker_cfg['name']}</b>"
+        f"<br><small>{broker_cfg['label']}</small>", unsafe_allow_html=True,
+    )
+    hdr_f.markdown(
+        f"<b style='color:{AGENT_COLORS['financial']}'>{fin_cfg['emoji']} {fin_cfg['name']}</b>"
+        f"<br><small>{fin_cfg['label']}</small>", unsafe_allow_html=True,
+    )
+    hdr_a.markdown(
+        f"<b style='color:{AGENT_COLORS['analyst']}'>{ana_cfg['emoji']} {ana_cfg['name']}</b>"
+        f"<br><small>{ana_cfg['label']}</small>", unsafe_allow_html=True,
+    )
+
+    # 대화 히스토리
+    for msg in advisory_msgs:
+        if msg["role"] == "user":
+            st.chat_message("user").write(msg["content"])
+        elif msg["role"] == "agents":
+            c_b, c_f, c_a = st.columns(3)
+            for col, key in zip((c_b, c_f, c_a), ("broker", "financial", "analyst")):
+                text = msg.get(key, "")
+                with col:
+                    st.markdown(
+                        f"<div style='border-left:3px solid {AGENT_COLORS[key]};"
+                        f"padding:8px;font-size:0.9rem'>{text}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+    # 상담록 저장 버튼
+    if advisory_msgs:
+        if st.button("📝 비서실장: 상담록 저장", use_container_width=True):
+            if has_api and st.session_state.get("meeting"):
+                meeting_obj: Meeting = st.session_state["meeting"]
+                with st.spinner("비서실장이 상담록을 작성 중..."):
+                    minutes = _run_async(meeting_obj.finalize())
+                st.success("✅ 상담록이 저장되었습니다.")
+                st.markdown(minutes)
+            else:
+                from datetime import datetime
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M")
+                st.markdown(MOCK_MINUTES.format(timestamp=ts))
+
+    # 채팅 입력
+    user_q = st.chat_input("에이전트에게 질문하세요…")
+    if user_q:
+        advisory_msgs.append({"role": "user", "content": user_q})
+        st.chat_message("user").write(user_q)
+
+        profile_block = format_profile_for_agents(buyer_profile)
+
+        if has_api:
+            # 실제 API: Meeting 오케스트레이터 사용
+            if st.session_state.get("meeting") is None:
+                st.session_state["meeting"] = Meeting(
+                    topic=user_q,
+                    profile=buyer_profile,
+                )
+            meeting_obj = st.session_state["meeting"]
+
+            with st.spinner("에이전트들이 답변 중..."):
+                turns = _run_async(meeting_obj.user_says(user_q))
+
+            agent_response: dict = {"role": "agents"}
+            c_b, c_f, c_a = st.columns(3)
+            for col, key in zip((c_b, c_f, c_a), ("broker", "financial", "analyst")):
+                t = next((x for x in turns if x.get("agent_key") == key), None)
+                text = t["text"] if t else "(응답 없음)"
+                agent_response[key] = text
+                with col:
+                    st.markdown(
+                        f"<div style='border-left:3px solid {AGENT_COLORS[key]};"
+                        f"padding:8px;font-size:0.9rem'>{text}</div>",
+                        unsafe_allow_html=True,
+                    )
+        else:
+            # Mock: MOCK_TURNS에서 순서대로
+            turn_idx = sum(1 for m in advisory_msgs if m["role"] == "user") - 1
+            mock_turn = MOCK_TURNS[turn_idx % len(MOCK_TURNS)]
+            agent_response = {"role": "agents"}
+            c_b, c_f, c_a = st.columns(3)
+            for col, key in zip((c_b, c_f, c_a), ("broker", "financial", "analyst")):
+                text = mock_turn.get(key, "")
+                agent_response[key] = text
+                with col:
+                    st.markdown(
+                        f"<div style='border-left:3px solid {AGENT_COLORS[key]};"
+                        f"padding:8px;font-size:0.9rem'>{text}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+        advisory_msgs.append(agent_response)
+        st.session_state["advisory_msgs"] = advisory_msgs
+        st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 3: 호가 적정성
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab3:
+    st.markdown("## 🔍 호가 적정성 평가")
+    st.caption("단지명·평형·호가를 입력하면 동일 단지 실거래 P50 기준으로 적정가를 평가합니다.")
+
+    region_keys = list(REGION_CODES.keys())
+    with st.form("audit_form"):
+        col_r, col_c = st.columns(2)
+        audit_region = col_r.selectbox(
+            "지역", region_keys,
+            index=region_keys.index("마포구") if "마포구" in region_keys else 0,
+        )
+        audit_complex = col_c.text_input("단지명", placeholder="예: 아현동 청구3차")
+
+        col_p, col_a = st.columns(2)
+        audit_pyeong = col_p.number_input("평형", 10.0, 100.0, 25.0, 0.5)
+        audit_asking = col_a.number_input(
+            "호가 (만원)", 10000, 300_000, 61000, 500,
+            help="6억 1천만원 = 61000",
+        )
+        audit_mode = st.radio(
+            "출력 모드", ["simple (일반인용)", "pro (전문가용)"], horizontal=True,
+        )
+        submitted = st.form_submit_button("🔍 평가 실행", type="primary")
+
+    if submitted and audit_complex:
+        request = PropertyAuditRequest(
+            region=audit_region,
+            complex_name=audit_complex,
+            area_pyeong=float(audit_pyeong),
+            asking_price_manwon=int(audit_asking),
+        )
+
+        with st.spinner("실거래 데이터 조회 중..."):
+            summary = get_region_data(audit_region)
+            matched = filter_trades_for_complex(summary, audit_complex, float(audit_pyeong))
+            dist = compute_price_distribution(matched, int(audit_asking))
+
+        label_color = {"적정": "green", "고평가": "red", "저평가": "blue", "표본부족": "gray"}
+        color = label_color.get(dist.label, "gray")
+        st.markdown(
+            f"### 결과: <span style='color:{color}'>{dist.label}</span>",
+            unsafe_allow_html=True,
+        )
+
+        if "simple" in audit_mode:
+            simple_txt = build_simple_summary(request, dist)
+            st.markdown(simple_txt)
+        else:
+            pro_txt = build_pro_summary(request, dist, [])
+            st.markdown(pro_txt)
+
+        if not dist.is_rejected:
+            # 분포 바 차트
+            import pandas as pd
+            df = pd.DataFrame({
+                "구분": ["P5", "P25", "P50 (적정가)", "P75", "P95", "호가"],
+                "가격(만원)": [dist.p5, dist.p25, dist.p50, dist.p75, dist.p95,
+                               dist.asking_price_manwon],
+            })
+            st.bar_chart(df.set_index("구분"))
+
+        # 에이전트 의견 (API 있을 때)
+        if has_api and not dist.is_rejected:
+            if st.button("💬 에이전트 의견 받기"):
+                with st.spinner("에이전트들이 호가를 검토 중..."):
+                    from personas import build_system_prompt
+                    from property_audit import build_persona_context, build_persona_prompt
+                    from anthropic import AsyncAnthropic
+
+                    async def _audit_agents():
+                        client = AsyncAnthropic()
+                        ctx = build_persona_context(request, dist)
+                        tasks = [
+                            client.messages.create(
+                                model="claude-sonnet-4-6",
+                                max_tokens=256,
+                                system=build_system_prompt(key),
+                                messages=[{
+                                    "role": "user",
+                                    "content": build_persona_prompt(key, ctx),
+                                }],
+                            )
+                            for key in ("broker", "financial", "analyst")
+                        ]
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+                        return [
+                            r.content[0].text if not isinstance(r, Exception) else str(r)
+                            for r in results
+                        ]
+
+                    texts = _run_async(_audit_agents())
+                    c_b, c_f, c_a = st.columns(3)
+                    for col, key, text in zip(
+                        (c_b, c_f, c_a),
+                        ("broker", "financial", "analyst"),
+                        texts,
+                    ):
+                        cfg = AGENT_CONFIG[key]
+                        with col:
+                            st.markdown(
+                                f"**{cfg['emoji']} {cfg['name']}**\n\n{text}",
+                            )
+    elif submitted:
+        st.warning("단지명을 입력해 주세요.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Tab 4: 상담록
+# ══════════════════════════════════════════════════════════════════════════════
+
+with tab4:
+    st.markdown("## 📝 상담록")
+    past = list_meetings(include_mock=True)
+    if not past:
+        st.info("아직 저장된 상담록이 없습니다.")
+    else:
+        for m in past:
+            with st.expander(f"📄 {m.topic}  ({m.date} {m.time})", expanded=False):
+                if m.summary:
+                    st.caption(m.summary)
+                try:
+                    content = Path(m.path).read_text(encoding="utf-8")
+                    st.markdown(content)
+                except Exception:
+                    st.warning("파일을 읽을 수 없습니다.")
