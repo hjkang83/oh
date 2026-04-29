@@ -16,7 +16,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from meeting import Meeting, Agent, SPEAKERS, _strip_code_fence, _slugify
-from profiles import Profile
+from profiles import BuyerProfile
 
 
 # ------------------------------------------------------------------
@@ -165,33 +165,33 @@ class TestUserSays:
 
 class TestMessagesForAgent:
     def test_first_message_is_user(self, meeting_no_api):
-        msgs = meeting_no_api._messages_for_agent("practitioner")
+        msgs = meeting_no_api._messages_for_agent("financial")
         assert msgs[0]["role"] == "user"
 
     def test_last_message_is_user(self, meeting_no_api):
-        msgs = meeting_no_api._messages_for_agent("practitioner")
+        msgs = meeting_no_api._messages_for_agent("financial")
         assert msgs[-1]["role"] == "user"
 
     def test_own_turns_are_assistant(self, meeting_no_api):
         loop = asyncio.get_event_loop()
         loop.run_until_complete(meeting_no_api.user_says("질문"))
-        msgs = meeting_no_api._messages_for_agent("practitioner")
+        msgs = meeting_no_api._messages_for_agent("financial")
         assistant_msgs = [m for m in msgs if m["role"] == "assistant"]
         assert len(assistant_msgs) >= 1
 
     def test_other_turns_are_user(self, meeting_no_api):
         loop = asyncio.get_event_loop()
         loop.run_until_complete(meeting_no_api.user_says("질문"))
-        msgs = meeting_no_api._messages_for_agent("practitioner")
+        msgs = meeting_no_api._messages_for_agent("financial")
         user_msgs = [m for m in msgs if m["role"] == "user"]
-        has_other_agent = any("CSO" in m["content"] or "투자컨설턴트" in m["content"]
+        has_other_agent = any("중개사" in m["content"] or "시장분석가" in m["content"]
                              for m in user_msgs)
         assert has_other_agent
 
     def test_alternating_roles(self, meeting_no_api):
         loop = asyncio.get_event_loop()
         loop.run_until_complete(meeting_no_api.user_says("질문"))
-        msgs = meeting_no_api._messages_for_agent("practitioner")
+        msgs = meeting_no_api._messages_for_agent("financial")
         for i in range(1, len(msgs)):
             if msgs[i]["role"] == msgs[i - 1]["role"] == "assistant":
                 pytest.fail("연속된 assistant 메시지 발견 — API 규약 위반")
@@ -366,16 +366,13 @@ class TestAlternateConstructors:
 
 class TestProfileIntegration:
     @pytest.fixture
-    def sample_profile(self) -> Profile:
-        return Profile(
-            nickname="홍대표",
-            risk_profile="conservative",
-            investment_goal="rental",
-            budget_manwon=45000,
-            property_count=1,
-            holding_years=5,
-            life_stage="expansion",
-            notes="강남/성수 권역 우선",
+    def sample_profile(self) -> BuyerProfile:
+        return BuyerProfile(
+            nickname="홍고객",
+            commute_location="판교",
+            budget_manwon=60000,
+            own_funds_manwon=20000,
+            notes="마포구 역세권 선호",
         )
 
     def test_profile_stored_on_meeting(self, mock_client, sample_profile):
@@ -392,9 +389,9 @@ class TestProfileIntegration:
         with patch("meeting.AsyncAnthropic", return_value=mock_client):
             m = Meeting("테스트 안건", profile=sample_profile)
         texts = [t["text"] for t in m.transcript]
-        assert any("홍대표" in t for t in texts)
-        assert any("보수적" in t for t in texts)
-        assert any("강남/성수 권역 우선" in t for t in texts)
+        assert any("홍고객" in t for t in texts)
+        assert any("판교" in t for t in texts)
+        assert any("마포구 역세권 선호" in t for t in texts)
 
     def test_profile_block_appears_before_topic(self, mock_client, sample_profile):
         with patch("meeting.AsyncAnthropic", return_value=mock_client):
@@ -408,10 +405,10 @@ class TestProfileIntegration:
     def test_profile_visible_to_agents_in_messages(self, mock_client, sample_profile):
         with patch("meeting.AsyncAnthropic", return_value=mock_client):
             m = Meeting("테스트 안건", profile=sample_profile)
-        msgs = m._messages_for_agent("mentor")
+        msgs = m._messages_for_agent("broker")
         joined = "\n".join(msg["content"] for msg in msgs)
-        assert "홍대표" in joined
-        assert "보수적" in joined
+        assert "홍고객" in joined
+        assert "판교" in joined
 
     def test_with_market_data_propagates_profile(self, mock_client, sample_profile):
         with patch("meeting.AsyncAnthropic", return_value=mock_client):
@@ -420,7 +417,7 @@ class TestProfileIntegration:
             )
         assert m.profile is sample_profile
         texts = [t["text"] for t in m.transcript]
-        assert any("홍대표" in t for t in texts)
+        assert any("홍고객" in t for t in texts)
 
     def test_with_context_propagates_profile(self, mock_client, sample_profile):
         with patch("meeting.AsyncAnthropic", return_value=mock_client):
@@ -429,7 +426,7 @@ class TestProfileIntegration:
             )
         assert m.profile is sample_profile
         texts = [t["text"] for t in m.transcript]
-        assert any("홍대표" in t for t in texts)
+        assert any("홍고객" in t for t in texts)
 
     def test_checkpoint_includes_profile(self, mock_client, sample_profile):
         with patch("meeting.AsyncAnthropic", return_value=mock_client):
@@ -438,8 +435,8 @@ class TestProfileIntegration:
         try:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
             assert data["profile"] is not None
-            assert data["profile"]["nickname"] == "홍대표"
-            assert data["profile"]["risk_profile"] == "conservative"
+            assert data["profile"]["nickname"] == "홍고객"
+            assert data["profile"]["commute_location"] == "판교"
         finally:
             from archive import delete_session
             delete_session(m.session_id)
@@ -453,8 +450,8 @@ class TestProfileIntegration:
                 restored = Meeting.from_session(m.session_id)
             assert restored is not None
             assert restored.profile is not None
-            assert restored.profile.nickname == "홍대표"
-            assert restored.profile.risk_profile == "conservative"
+            assert restored.profile.nickname == "홍고객"
+            assert restored.profile.commute_location == "판교"
             assert restored.profile_data == m.profile_data
         finally:
             from archive import delete_session
@@ -490,13 +487,15 @@ class TestProfileIntegration:
 class TestSourceValidatorIntegration:
     """CFO turn에 [출처:] 누락된 수치가 있으면 turn['warnings']에 부착되는지."""
 
-    def _drive(self, meeting, cfo_text: str, cso_text: str = "CSO ok",
-               mentor_text: str = "Mentor ok"):
+    def _drive(self, meeting, cfo_text: str, cso_text: str = "analyst ok",
+               mentor_text: str = "broker ok"):
+        # SPEAKERS = ["broker", "financial", "analyst"]
+        # financial (index 1) is the agent that gets source-citation warnings.
         meeting.client.messages.create = AsyncMock(
             side_effect=[
-                _mock_response(cfo_text),
-                _mock_response(cso_text),
-                _mock_response(mentor_text),
+                _mock_response(mentor_text),  # broker (1st)
+                _mock_response(cfo_text),     # financial (2nd) ← warning target
+                _mock_response(cso_text),     # analyst (3rd)
             ]
         )
         return asyncio.get_event_loop().run_until_complete(
@@ -514,58 +513,59 @@ class TestSourceValidatorIntegration:
             meeting_no_api,
             "수익률 4.2%입니다 [출처: 한국부동산원].",
         )
-        cfo = next(t for t in turns if t["agent_key"] == "practitioner")
-        assert cfo["warnings"] == []
+        financial = next(t for t in turns if t["agent_key"] == "financial")
+        assert financial["warnings"] == []
 
     def test_cfo_without_source_has_warning(self, meeting_no_api):
         turns = self._drive(
             meeting_no_api,
             "수익률 4.2%입니다.",  # 출처 누락
         )
-        cfo = next(t for t in turns if t["agent_key"] == "practitioner")
-        assert len(cfo["warnings"]) == 1
-        assert "4.2%" in cfo["warnings"][0]
+        financial = next(t for t in turns if t["agent_key"] == "financial")
+        assert len(financial["warnings"]) == 1
+        assert "4.2%" in financial["warnings"][0]
 
     def test_cso_skipped_even_with_bare_numbers(self, meeting_no_api):
-        # CSO는 1차 가드 적용 대상이 아니므로 출처 없는 수치도 warning 안 붙음
+        # analyst는 1차 가드 적용 대상이 아니므로 출처 없는 수치도 warning 안 붙음
         turns = self._drive(
             meeting_no_api,
-            "CFO 수치 5% [출처: x].",
-            cso_text="CSO 5% 출처 없음.",
+            "재무설계사 수치 5% [출처: x].",
+            cso_text="분석가 5% 출처 없음.",
         )
-        cso = next(t for t in turns if t["agent_key"] == "redteam")
-        assert cso["warnings"] == []
+        analyst = next(t for t in turns if t["agent_key"] == "analyst")
+        assert analyst["warnings"] == []
 
     def test_mentor_skipped(self, meeting_no_api):
         turns = self._drive(
             meeting_no_api,
-            "CFO ok [출처: x].",
-            mentor_text="Mentor 5% 출처 없음.",
+            "재무설계사 ok [출처: x].",
+            mentor_text="중개사 5% 출처 없음.",
         )
-        mentor = next(t for t in turns if t["agent_key"] == "mentor")
-        assert mentor["warnings"] == []
+        broker = next(t for t in turns if t["agent_key"] == "broker")
+        assert broker["warnings"] == []
 
     def test_failed_cfo_response_has_no_warnings(self, meeting_no_api):
+        # SPEAKERS = ["broker", "financial", "analyst"]; financial is 2nd
         meeting_no_api.client.messages.create = AsyncMock(
             side_effect=[
-                RuntimeError("API 장애"),
-                _mock_response("CSO ok"),
-                _mock_response("Mentor ok"),
+                _mock_response("broker ok"),
+                RuntimeError("API 장애"),   # financial fails
+                _mock_response("analyst ok"),
             ]
         )
         turns = asyncio.get_event_loop().run_until_complete(
             meeting_no_api.user_says("질문")
         )
-        cfo = next(t for t in turns if t["agent_key"] == "practitioner")
-        assert cfo["warnings"] == []
+        financial = next(t for t in turns if t["agent_key"] == "financial")
+        assert financial["warnings"] == []
 
     def test_multiple_missing_numbers_yield_multiple_warnings(self, meeting_no_api):
         turns = self._drive(
             meeting_no_api,
             "수익률 4.2%입니다. 취득세 4.6%입니다.",
         )
-        cfo = next(t for t in turns if t["agent_key"] == "practitioner")
-        assert len(cfo["warnings"]) == 2
+        financial = next(t for t in turns if t["agent_key"] == "financial")
+        assert len(financial["warnings"]) == 2
 
 
 # ------------------------------------------------------------------
