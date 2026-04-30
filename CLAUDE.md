@@ -2,8 +2,8 @@
 
 ## 프로젝트 개요
 
-Data 기반 Multi-Agent 부동산 투자 자문 시스템 (KAIST IMMS MBA).
-CFO·CSO·투자컨설턴트 3명의 AI C-suite가 실거래 데이터 기반으로 토론하며 투자 의사결정을 돕는다.
+Data 기반 Multi-Agent 생애 첫 주택 구매 자문 시스템 (KAIST IMMS MBA).
+MC 인터뷰어가 BuyerProfile을 수집하고, 중개사·재무설계사·시장분석가 3인이 국토부 실거래 데이터 기반으로 3단계 자문(인터뷰 → 전문 자문 → 호가 적정성)을 제공한다.
 
 ## 작업 방식
 
@@ -37,20 +37,18 @@ CFO·CSO·투자컨설턴트 3명의 AI C-suite가 실거래 데이터 기반으
 
 - **언어**: Python 3.10+
 - **LLM**: Anthropic Claude API (`claude-sonnet-4-6`), `AsyncAnthropic`
-- **테스트**: pytest (260+ tests), API 키 없이 전체 로직 검증 (E2E + 경계 + 할루시네이션 가드)
+- **테스트**: pytest (602 tests), API 키 없이 전체 로직 검증 (E2E + 경계 + 할루시네이션 가드)
 - **프론트엔드**: Streamlit
 - **의존성**: requirements.txt 참조
 
 ## 프로젝트 구조
 
 ```
-src/           # 소스 코드 (main.py CLI, app.py Streamlit UI)
+src/           # 소스 코드 (app.py Streamlit UI, meeting.py 오케스트레이터 등)
 agents/        # 페르소나 명세서 (*.md) — 프롬프트 튜닝은 여기서
-tests/         # pytest 테스트 스위트 (260+ tests)
-meetings/      # 회의록 저장 디렉토리
-MANIFESTO.md   # 핵심 가치와 설계 원칙
-WHYTREE.md     # Why Tree 분석
-PREMORTEM.md   # 사전 부검
+tests/         # pytest 테스트 스위트 (602 tests)
+meetings/      # 상담록 저장 디렉토리
+docs/          # 설계 문서 (MANIFESTO, WHYTREE, PREMORTEM)
 COMPARISON.md  # ChatGPT 비교 시연 자료
 glossary.md    # 용어집
 ```
@@ -58,7 +56,7 @@ glossary.md    # 용어집
 ## 핵심 규칙
 
 - 에이전트 페르소나 수정은 `agents/*.md` 파일 편집으로 한다 (코드 변경 아님).
-- 내부 코드 키(`"mentor"`, `"practitioner"`, `"redteam"`, `"clerk"`)는 변경하지 않는다.
+- 내부 코드 키(`"broker"`, `"financial"`, `"analyst"`, `"clerk"`)는 변경하지 않는다.
 - 사용자 표시용 이름은 `src/personas.py`의 `AGENT_CONFIG`에서 관리한다.
 - 모든 수치에는 출처를 명시한다 (MANIFESTO 핵심 가치 1번).
 
@@ -66,27 +64,23 @@ glossary.md    # 용어집
 
 | 모듈 | 역할 |
 |------|------|
-| `src/meeting.py` | 회의 오케스트레이터 (asyncio.gather 병렬 호출) |
+| `src/app.py` | Streamlit 3단계 UI (Stage 1~3 + 상담록 Tab) |
+| `src/meeting.py` | 에이전트 오케스트레이터 (asyncio.gather 병렬 호출) |
+| `src/interview.py` | MC 인터뷰 엔진 (BuyerProfile 수집, 완성도 점수) |
+| `src/profiles.py` | BuyerProfile 데이터클래스 |
 | `src/personas.py` | 페르소나 로더 + 시스템 프롬프트 빌더 |
-| `src/real_estate.py` | 국토교통부 실거래가 API + 샘플 데이터 |
-| `src/yield_analyzer.py` | 수익률 분석 (표면/실질/레버리지) |
-| `src/scenario.py` | 민감도·스트레스 시뮬레이션 |
-| `src/cashflow.py` | 10년 현금흐름 프로젝션 (IRR/NPV) |
-| `src/monte_carlo.py` | Monte Carlo 시뮬레이션 (Cholesky) |
-| `src/tax.py` | 취득세/보유세/양도세 시뮬레이션 |
-| `src/scorecard.py` | 100점 만점 투자 판단 스코어카드 |
-| `src/portfolio.py` | 포트폴리오 조합 최적화 |
-| `src/charts.py` | Plotly 시각화 (8종 차트) |
-| `src/archive.py` | 회의록 저장 + 세션 체크포인트 + 과거 회의 검색 |
+| `src/molit_api.py` | 국토교통부 실거래가 API + P50 산출 + 출처 자동 생성 |
+| `src/crawler.py` | 호갱노노·네이버부동산 크롤러 (CrawlerBlockedError graceful fallback) |
+| `src/property_audit.py` | 호가 적정성 평가 (P50 분포 기반) |
+| `src/demo_mock.py` | API 키 없이 Gold Standard 데모 |
 
 ## 테스트 실행
 
 ```bash
-pytest tests/ -v              # 전체 테스트 (260+)
+pytest tests/ -v              # 전체 테스트 (602)
 pytest tests/test_e2e.py -v   # E2E 파이프라인 테스트
-python src/demo_mock.py       # API 키 없이 Mock 데모
-python src/main.py --demo     # 실제 API 데모
-streamlit run src/app.py      # Streamlit Web UI
+python src/demo_mock.py       # API 키 없이 Mock 데모 (Gold Standard)
+streamlit run src/app.py      # Streamlit Web UI (3단계 플로우)
 ```
 
 ## 세션 관리
