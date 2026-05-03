@@ -9,7 +9,7 @@ from personas import AGENT_CONFIG, DIVERSITY_ANGLES, load_persona_spec, build_sy
 
 class TestAgentConfig:
     def test_has_all_agents(self):
-        for key in ["mc", "broker", "financial", "analyst", "clerk"]:
+        for key in ["mc", "broker", "financial", "analyst", "loan_advisor", "clerk"]:
             assert key in AGENT_CONFIG
 
     def test_agent_has_required_fields(self):
@@ -25,6 +25,7 @@ class TestAgentConfig:
         assert "중개사" in names
         assert "재무설계사" in names
         assert "시장분석가" in names
+        assert "대출상담사" in names
         assert "비서실장" in names
 
     def test_old_investment_agents_removed(self):
@@ -58,7 +59,7 @@ class TestBuildSystemPrompt:
         assert "하나" in prompt or "한 번에" in prompt
 
     def test_analysis_agents_have_boundary_rules(self):
-        for key in ("broker", "financial", "analyst"):
+        for key in ("broker", "financial", "analyst", "loan_advisor"):
             prompt = build_system_prompt(key)
             assert "자기 영역만" in prompt or "영역 경계" in prompt
 
@@ -110,6 +111,38 @@ class TestAgentBoundaryRules:
     def test_analyst_spec_forbids_financial_calc(self):
         spec = load_persona_spec("analyst")
         assert "재무설계사" in spec
+
+    def test_financial_spec_delegates_policy_loan(self):
+        """재무설계사는 정책대출(디딤돌·보금자리) 매칭을 대출상담사에 위임한다."""
+        spec = load_persona_spec("financial")
+        assert "대출상담사" in spec
+
+    def test_loan_advisor_spec_has_policy_loan_focus(self):
+        spec = load_persona_spec("loan_advisor")
+        assert "디딤돌" in spec
+        assert "보금자리" in spec
+        assert "생애최초" in spec
+
+    def test_loan_advisor_spec_cites_sources(self):
+        spec = load_persona_spec("loan_advisor")
+        assert "출처" in spec
+        assert "[출처:" in spec
+
+    def test_loan_advisor_spec_forbids_other_domains(self):
+        """대출상담사는 입지·시장가격·사적자산 영역을 침범하지 않는다."""
+        spec = load_persona_spec("loan_advisor")
+        assert "중개사" in spec       # 입지 위임
+        assert "시장분석가" in spec   # 가격 위임
+        assert "재무설계사" in spec   # 사적 자산 위임
+
+    def test_loan_advisor_spec_mentions_ltv_and_dsr(self):
+        spec = load_persona_spec("loan_advisor")
+        assert "LTV" in spec
+        assert "DSR" in spec
+
+    def test_loan_advisor_spec_uses_static_rulebook(self):
+        spec = load_persona_spec("loan_advisor")
+        assert "loan_products.py" in spec or "loan_calc" in spec
 
 
 class TestHallucinationGuards:
@@ -230,6 +263,19 @@ class TestDiversityAngles:
 
     def test_mc_has_no_diversity_angles(self):
         assert "mc" not in DIVERSITY_ANGLES
+
+    def test_loan_advisor_has_diversity_angles(self):
+        assert "loan_advisor" in DIVERSITY_ANGLES
+        assert len(DIVERSITY_ANGLES["loan_advisor"]) >= 4
+
+    def test_loan_advisor_angles_include_qualification(self):
+        angles = DIVERSITY_ANGLES["loan_advisor"]
+        assert any("자격" in a or "한도" in a or "매칭" in a for a in angles)
+
+    def test_financial_no_longer_owns_policy_loan_angle(self):
+        """정책자금 각도는 대출상담사로 이관되었다."""
+        angles = DIVERSITY_ANGLES["financial"]
+        assert "정책자금" not in angles
 
     def test_broker_angles_include_location(self):
         angles = DIVERSITY_ANGLES["broker"]
