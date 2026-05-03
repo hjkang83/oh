@@ -62,9 +62,12 @@ AGENT_COLORS = {
     "broker": "#1565C0",
     "financial": "#2E7D32",
     "analyst": "#C62828",
+    "loan_advisor": "#6D4C41",
     "clerk": "#E65100",
     "mc": "#6A1B9A",
 }
+
+ADVISORY_AGENT_KEYS: tuple[str, ...] = ("broker", "financial", "analyst", "loan_advisor")
 
 
 def _run_async(coro):
@@ -167,6 +170,21 @@ with st.sidebar:
             f_monthly = st.number_input(
                 "월 원리금 한도 (만원)", 0, 1000, base.monthly_payment_manwon, 10,
             )
+            f_income = st.number_input(
+                "부부합산 연소득 (만원)", 0, 50_000, base.annual_income_manwon, 100,
+                help="대출상담사 정책대출 자격 판정에 활용 (디딤돌·보금자리 소득 한도 비교)",
+            )
+            f_debt = st.number_input(
+                "기존 월 원리금 부담 (만원)", 0, 1000, base.existing_debt_manwon, 10,
+                help="DSR 산정용. 신규 대출 한도에 영향. 없으면 0.",
+            )
+            f_first = st.checkbox(
+                "생애최초 주택 구매자 (무주택)", value=base.is_first_buyer,
+                help="LTV 우대(80%까지) + 디딤돌·보금자리 우대 한도 적용",
+            )
+            f_subscription = st.number_input(
+                "청약저축 가입년수", 0, 50, base.subscription_years, 1,
+            )
             f_family = st.number_input("가족 수", 1, 10, max(1, base.family_size), 1)
             f_area = st.text_input("선호 지역", value=base.preferred_area)
             f_size = st.number_input(
@@ -185,7 +203,12 @@ with st.sidebar:
                 new_p = BuyerProfile(
                     nickname=f_nickname, commute_location=f_commute,
                     budget_manwon=int(f_budget), own_funds_manwon=int(f_own),
-                    monthly_payment_manwon=int(f_monthly), family_size=int(f_family),
+                    monthly_payment_manwon=int(f_monthly),
+                    annual_income_manwon=int(f_income),
+                    existing_debt_manwon=int(f_debt),
+                    is_first_buyer=bool(f_first),
+                    subscription_years=int(f_subscription),
+                    family_size=int(f_family),
                     preferred_area=f_area, preferred_size_sqm=float(f_size),
                     preferred_type=f_type, move_in_months=int(f_months), notes=f_notes,
                 )
@@ -237,17 +260,18 @@ if st.session_state.get("mock_mode"):
     st.code(DEMO_PROFILE_BLOCK, language=None)
 
     st.divider()
-    st.markdown("### 💬 에이전트 자문 대화")
+    st.markdown("### 💬 에이전트 자문 대화 — 4인이 각자 다른 예산을 제시합니다")
     for i, turn in enumerate(MOCK_TURNS, 1):
         st.markdown(f"**Turn {i}**")
         st.chat_message("user").write(turn["user"])
-        cols = st.columns(3)
-        for col, key in zip(cols, ("broker", "financial", "analyst")):
+        cols = st.columns(len(ADVISORY_AGENT_KEYS))
+        for col, key in zip(cols, ADVISORY_AGENT_KEYS):
             cfg = AGENT_CONFIG[key]
             with col:
                 st.markdown(
                     f"<div style='border-left:4px solid {AGENT_COLORS[key]};padding:8px'>"
-                    f"<b>{cfg['emoji']} {cfg['name']}</b><br>{turn[key]}</div>",
+                    f"<b>{cfg['emoji']} {cfg['name']}</b><br>"
+                    f"<small>{cfg['label']}</small><br>{turn[key]}</div>",
                     unsafe_allow_html=True,
                 )
         st.divider()
@@ -389,29 +413,22 @@ with tab2:
 
     st.divider()
 
-    broker_cfg = AGENT_CONFIG["broker"]
-    fin_cfg = AGENT_CONFIG["financial"]
-    ana_cfg = AGENT_CONFIG["analyst"]
-    hdr_b, hdr_f, hdr_a = st.columns(3)
-    hdr_b.markdown(
-        f"<b style='color:{AGENT_COLORS['broker']}'>{broker_cfg['emoji']} {broker_cfg['name']}</b>"
-        f"<br><small>{broker_cfg['label']}</small>", unsafe_allow_html=True,
-    )
-    hdr_f.markdown(
-        f"<b style='color:{AGENT_COLORS['financial']}'>{fin_cfg['emoji']} {fin_cfg['name']}</b>"
-        f"<br><small>{fin_cfg['label']}</small>", unsafe_allow_html=True,
-    )
-    hdr_a.markdown(
-        f"<b style='color:{AGENT_COLORS['analyst']}'>{ana_cfg['emoji']} {ana_cfg['name']}</b>"
-        f"<br><small>{ana_cfg['label']}</small>", unsafe_allow_html=True,
-    )
+    st.caption("4인이 같은 입력에 각자 다른 예산을 제시합니다 — 안전선·도전선·시장평균·공적한도")
+    hdr_cols = st.columns(len(ADVISORY_AGENT_KEYS))
+    for col, key in zip(hdr_cols, ADVISORY_AGENT_KEYS):
+        cfg = AGENT_CONFIG[key]
+        col.markdown(
+            f"<b style='color:{AGENT_COLORS[key]}'>{cfg['emoji']} {cfg['name']}</b>"
+            f"<br><small>{cfg['label']}</small>",
+            unsafe_allow_html=True,
+        )
 
     for msg in advisory_msgs:
         if msg["role"] == "user":
             st.chat_message("user").write(msg["content"])
         elif msg["role"] == "agents":
-            c_b, c_f, c_a = st.columns(3)
-            for col, key in zip((c_b, c_f, c_a), ("broker", "financial", "analyst")):
+            cols = st.columns(len(ADVISORY_AGENT_KEYS))
+            for col, key in zip(cols, ADVISORY_AGENT_KEYS):
                 text = msg.get(key, "")
                 with col:
                     st.markdown(
@@ -453,8 +470,8 @@ with tab2:
                 turns = _run_async(meeting_obj.user_says(user_q))
 
             agent_response: dict = {"role": "agents"}
-            c_b, c_f, c_a = st.columns(3)
-            for col, key in zip((c_b, c_f, c_a), ("broker", "financial", "analyst")):
+            cols = st.columns(len(ADVISORY_AGENT_KEYS))
+            for col, key in zip(cols, ADVISORY_AGENT_KEYS):
                 t = next((x for x in turns if x.get("agent_key") == key), None)
                 text = t["text"] if t else "(응답 없음)"
                 agent_response[key] = text
@@ -468,8 +485,8 @@ with tab2:
             turn_idx = sum(1 for m in advisory_msgs if m["role"] == "user") - 1
             mock_turn = MOCK_TURNS[turn_idx % len(MOCK_TURNS)]
             agent_response = {"role": "agents"}
-            c_b, c_f, c_a = st.columns(3)
-            for col, key in zip((c_b, c_f, c_a), ("broker", "financial", "analyst")):
+            cols = st.columns(len(ADVISORY_AGENT_KEYS))
+            for col, key in zip(cols, ADVISORY_AGENT_KEYS):
                 text = mock_turn.get(key, "")
                 agent_response[key] = text
                 with col:
@@ -598,7 +615,7 @@ with tab3:
                                     "content": build_persona_prompt(key, ctx),
                                 }],
                             )
-                            for key in ("broker", "financial", "analyst")
+                            for key in ADVISORY_AGENT_KEYS
                         ]
                         results = await asyncio.gather(*tasks, return_exceptions=True)
                         return [
@@ -607,12 +624,8 @@ with tab3:
                         ]
 
                     texts = _run_async(_audit_agents())
-                    c_b, c_f, c_a = st.columns(3)
-                    for col, key, text in zip(
-                        (c_b, c_f, c_a),
-                        ("broker", "financial", "analyst"),
-                        texts,
-                    ):
+                    cols = st.columns(len(ADVISORY_AGENT_KEYS))
+                    for col, key, text in zip(cols, ADVISORY_AGENT_KEYS, texts):
                         cfg = AGENT_CONFIG[key]
                         with col:
                             st.markdown(f"**{cfg['emoji']} {cfg['name']}**\n\n{text}")
