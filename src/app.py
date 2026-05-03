@@ -69,6 +69,78 @@ AGENT_COLORS = {
 
 ADVISORY_AGENT_KEYS: tuple[str, ...] = ("broker", "financial", "analyst", "loan_advisor")
 
+LAYOUT_KEY = "layout_mode"  # "wide" (4단 가로) | "stacked" (세로 스택)
+
+
+def _layout_mode() -> str:
+    return st.session_state.get(LAYOUT_KEY, "wide")
+
+
+def _agent_card_html(key: str, text: str, *, mode: str, show_label: bool) -> str:
+    """Single agent card HTML — stacked는 보더 두껍게, 좁은 화면 친화."""
+    cfg = AGENT_CONFIG[key]
+    if mode == "stacked":
+        label_block = (
+            f" <small style='opacity:0.7'>· {cfg['label']}</small>" if show_label else ""
+        )
+        return (
+            f"<div style='border-left:5px solid {AGENT_COLORS[key]};"
+            f"padding:10px 12px;margin:6px 0;background:rgba(0,0,0,0.025);"
+            f"border-radius:6px;font-size:0.95rem'>"
+            f"<b style='color:{AGENT_COLORS[key]}'>{cfg['emoji']} {cfg['name']}</b>"
+            f"{label_block}<br>{text}</div>"
+        )
+    label_block = f"<br><small>{cfg['label']}</small>" if show_label else ""
+    return (
+        f"<div style='border-left:3px solid {AGENT_COLORS[key]};"
+        f"padding:8px;font-size:0.9rem;border-radius:4px'>"
+        f"<b style='color:{AGENT_COLORS[key]}'>{cfg['emoji']} {cfg['name']}</b>"
+        f"{label_block}<br>{text}</div>"
+    )
+
+
+def render_agent_cards(
+    items: dict[str, str],
+    *,
+    show_label: bool = False,
+) -> None:
+    """4인 응답 카드 렌더링 — 사이드바 레이아웃 모드에 따라 4단 가로 또는 세로 스택.
+
+    items: {agent_key: response_text}. 누락 키는 "(응답 없음)"으로 표기.
+    show_label: 페르소나 라벨(직함) 노출 여부.
+    """
+    mode = _layout_mode()
+    if mode == "stacked":
+        for key in ADVISORY_AGENT_KEYS:
+            text = items.get(key, "(응답 없음)")
+            st.markdown(
+                _agent_card_html(key, text, mode=mode, show_label=show_label),
+                unsafe_allow_html=True,
+            )
+        return
+    cols = st.columns(len(ADVISORY_AGENT_KEYS))
+    for col, key in zip(cols, ADVISORY_AGENT_KEYS):
+        text = items.get(key, "(응답 없음)")
+        with col:
+            st.markdown(
+                _agent_card_html(key, text, mode=mode, show_label=show_label),
+                unsafe_allow_html=True,
+            )
+
+
+def render_agent_header() -> None:
+    """4인 자문 헤더(이름·라벨). 세로 스택 모드에선 카드 자체에 헤더 포함되므로 생략."""
+    if _layout_mode() == "stacked":
+        return
+    cols = st.columns(len(ADVISORY_AGENT_KEYS))
+    for col, key in zip(cols, ADVISORY_AGENT_KEYS):
+        cfg = AGENT_CONFIG[key]
+        col.markdown(
+            f"<b style='color:{AGENT_COLORS[key]}'>{cfg['emoji']} {cfg['name']}</b>"
+            f"<br><small>{cfg['label']}</small>",
+            unsafe_allow_html=True,
+        )
+
 
 def _run_async(coro):
     loop = asyncio.new_event_loop()
@@ -136,6 +208,18 @@ with st.sidebar:
         st.success("✅ API 연결됨")
     else:
         st.warning("⚠️ Mock 모드 (API 키 없음)")
+
+    st.divider()
+
+    # ── 화면 모드 ──
+    layout_label = st.radio(
+        "📱 화면 모드",
+        ("가로 (4단)", "세로 (스택)"),
+        horizontal=True,
+        index=0 if _layout_mode() == "wide" else 1,
+        help="모바일·좁은 화면에서는 '세로'를 추천합니다. 4명 응답이 위아래로 스택돼 가독성이 올라갑니다.",
+    )
+    st.session_state[LAYOUT_KEY] = "wide" if layout_label == "가로 (4단)" else "stacked"
 
     st.divider()
 
@@ -264,16 +348,10 @@ if st.session_state.get("mock_mode"):
     for i, turn in enumerate(MOCK_TURNS, 1):
         st.markdown(f"**Turn {i}**")
         st.chat_message("user").write(turn["user"])
-        cols = st.columns(len(ADVISORY_AGENT_KEYS))
-        for col, key in zip(cols, ADVISORY_AGENT_KEYS):
-            cfg = AGENT_CONFIG[key]
-            with col:
-                st.markdown(
-                    f"<div style='border-left:4px solid {AGENT_COLORS[key]};padding:8px'>"
-                    f"<b>{cfg['emoji']} {cfg['name']}</b><br>"
-                    f"<small>{cfg['label']}</small><br>{turn[key]}</div>",
-                    unsafe_allow_html=True,
-                )
+        render_agent_cards(
+            {key: turn[key] for key in ADVISORY_AGENT_KEYS},
+            show_label=True,
+        )
         st.divider()
 
     ts = datetime.now().strftime("%Y-%m-%d %H:%M")
@@ -414,28 +492,16 @@ with tab2:
     st.divider()
 
     st.caption("4인이 같은 입력에 각자 다른 예산을 제시합니다 — 안전선·도전선·시장평균·공적한도")
-    hdr_cols = st.columns(len(ADVISORY_AGENT_KEYS))
-    for col, key in zip(hdr_cols, ADVISORY_AGENT_KEYS):
-        cfg = AGENT_CONFIG[key]
-        col.markdown(
-            f"<b style='color:{AGENT_COLORS[key]}'>{cfg['emoji']} {cfg['name']}</b>"
-            f"<br><small>{cfg['label']}</small>",
-            unsafe_allow_html=True,
-        )
+    render_agent_header()
 
     for msg in advisory_msgs:
         if msg["role"] == "user":
             st.chat_message("user").write(msg["content"])
         elif msg["role"] == "agents":
-            cols = st.columns(len(ADVISORY_AGENT_KEYS))
-            for col, key in zip(cols, ADVISORY_AGENT_KEYS):
-                text = msg.get(key, "")
-                with col:
-                    st.markdown(
-                        f"<div style='border-left:3px solid {AGENT_COLORS[key]};"
-                        f"padding:8px;font-size:0.9rem'>{text}</div>",
-                        unsafe_allow_html=True,
-                    )
+            render_agent_cards(
+                {k: msg.get(k, "") for k in ADVISORY_AGENT_KEYS},
+                show_label=(_layout_mode() == "stacked"),
+            )
 
     # ── Phase 4B: 상담록 저장 ────────────────────────────────────────────────
     if advisory_msgs:
@@ -470,31 +536,23 @@ with tab2:
                 turns = _run_async(meeting_obj.user_says(user_q))
 
             agent_response: dict = {"role": "agents"}
-            cols = st.columns(len(ADVISORY_AGENT_KEYS))
-            for col, key in zip(cols, ADVISORY_AGENT_KEYS):
+            for key in ADVISORY_AGENT_KEYS:
                 t = next((x for x in turns if x.get("agent_key") == key), None)
-                text = t["text"] if t else "(응답 없음)"
-                agent_response[key] = text
-                with col:
-                    st.markdown(
-                        f"<div style='border-left:3px solid {AGENT_COLORS[key]};"
-                        f"padding:8px;font-size:0.9rem'>{text}</div>",
-                        unsafe_allow_html=True,
-                    )
+                agent_response[key] = t["text"] if t else "(응답 없음)"
+            render_agent_cards(
+                {k: agent_response[k] for k in ADVISORY_AGENT_KEYS},
+                show_label=(_layout_mode() == "stacked"),
+            )
         else:
             turn_idx = sum(1 for m in advisory_msgs if m["role"] == "user") - 1
             mock_turn = MOCK_TURNS[turn_idx % len(MOCK_TURNS)]
             agent_response = {"role": "agents"}
-            cols = st.columns(len(ADVISORY_AGENT_KEYS))
-            for col, key in zip(cols, ADVISORY_AGENT_KEYS):
-                text = mock_turn.get(key, "")
-                agent_response[key] = text
-                with col:
-                    st.markdown(
-                        f"<div style='border-left:3px solid {AGENT_COLORS[key]};"
-                        f"padding:8px;font-size:0.9rem'>{text}</div>",
-                        unsafe_allow_html=True,
-                    )
+            for key in ADVISORY_AGENT_KEYS:
+                agent_response[key] = mock_turn.get(key, "")
+            render_agent_cards(
+                {k: agent_response[k] for k in ADVISORY_AGENT_KEYS},
+                show_label=(_layout_mode() == "stacked"),
+            )
 
         advisory_msgs.append(agent_response)
         st.session_state["advisory_msgs"] = advisory_msgs
@@ -624,11 +682,10 @@ with tab3:
                         ]
 
                     texts = _run_async(_audit_agents())
-                    cols = st.columns(len(ADVISORY_AGENT_KEYS))
-                    for col, key, text in zip(cols, ADVISORY_AGENT_KEYS, texts):
-                        cfg = AGENT_CONFIG[key]
-                        with col:
-                            st.markdown(f"**{cfg['emoji']} {cfg['name']}**\n\n{text}")
+                    render_agent_cards(
+                        {k: t for k, t in zip(ADVISORY_AGENT_KEYS, texts)},
+                        show_label=(_layout_mode() == "stacked"),
+                    )
 
     elif submitted:
         st.warning("단지명을 입력해 주세요.")
