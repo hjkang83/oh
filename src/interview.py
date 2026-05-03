@@ -28,6 +28,7 @@ REQUIRED_FIELDS: list[str] = ["commute_location", "budget_manwon"]
 OPTIONAL_FIELDS: list[str] = [
     "own_funds_manwon",
     "monthly_payment_manwon",
+    "annual_income_manwon",  # 대출상담사 자격 판정 핵심
     "family_size",
     "preferred_area",
     "preferred_size_sqm",
@@ -80,6 +81,8 @@ class InterviewSession:
             missing.append("own_funds_manwon")
         if p.monthly_payment_manwon == 0:
             missing.append("monthly_payment_manwon")
+        if p.annual_income_manwon == 0:
+            missing.append("annual_income_manwon")
         if p.family_size <= 1:
             missing.append("family_size")
         if not p.preferred_area:
@@ -247,6 +250,43 @@ def extract_profile_heuristic(conversation_text: str) -> dict[str, Any]:
         if val > 0:
             updates["monthly_payment_manwon"] = val
 
+    # 부부합산 연소득
+    income_patterns = [
+        r"부부\s*합산\s*(?:연\s*소득|소득)[은는이가]?\s*([0-9억천만원\s,]+)",
+        r"(?:연\s*소득|총\s*소득)[은는이가]?\s*([0-9억천만원\s,]+)",
+    ]
+    for pat in income_patterns:
+        m = re.search(pat, conversation_text)
+        if m:
+            val = _parse_manwon(m.group(1))
+            if val > 0:
+                updates["annual_income_manwon"] = val
+                break
+
+    # 기존 부채 (월 원리금 부담)
+    debt_patterns = [
+        r"기존\s*(?:대출|부채)[^.]*?월\s*([0-9만원\s,]+)",
+        r"마이너스\s*통장[^.]*?월\s*([0-9만원\s,]+)",
+    ]
+    for pat in debt_patterns:
+        m = re.search(pat, conversation_text)
+        if m:
+            val = _parse_manwon(m.group(1))
+            if val > 0:
+                updates["existing_debt_manwon"] = val
+                break
+
+    # 생애최초 / 무주택 여부
+    if "유주택" in conversation_text or "이미 집이 있" in conversation_text or "보유 주택" in conversation_text:
+        updates["is_first_buyer"] = False
+    elif "무주택" in conversation_text or "생애최초" in conversation_text or "생애 최초" in conversation_text:
+        updates["is_first_buyer"] = True
+
+    # 청약저축 가입 년수
+    m = re.search(r"청약\s*(?:저축|통장)[^.]*?(\d+)\s*년", conversation_text)
+    if m:
+        updates["subscription_years"] = int(m.group(1))
+
     # 가족 수
     m = re.search(r"(\d+)\s*인\s*(?:가구|가족|세대)", conversation_text)
     if m:
@@ -309,7 +349,11 @@ def apply_heuristic_to_session(session: InterviewSession) -> None:
     """인터뷰 전체 대화에서 휴리스틱 추출 후 세션 프로필에 병합."""
     updates = extract_profile_heuristic(session.conversation_text())
     current = session.profile.to_dict()
-    current.update({k: v for k, v in updates.items() if v})
+    # bool 필드는 False도 의미 있는 값 (예: is_first_buyer=False) — falsy 필터 우회
+    bool_fields = {"is_first_buyer", "has_children", "plans_children"}
+    for k, v in updates.items():
+        if k in bool_fields or v:
+            current[k] = v
     session.profile = BuyerProfile.from_dict(current)
     session.check_and_set_complete()
 
@@ -325,6 +369,10 @@ _EXTRACTION_SYSTEM = """당신은 부동산 자문 시스템의 프로필 추출
   "budget_manwon": 60000,
   "own_funds_manwon": 20000,
   "monthly_payment_manwon": 180,
+  "annual_income_manwon": 5500,
+  "existing_debt_manwon": 0,
+  "is_first_buyer": true,
+  "subscription_years": 5,
   "family_size": 2,
   "has_children": false,
   "plans_children": true,
@@ -339,7 +387,10 @@ _EXTRACTION_SYSTEM = """당신은 부동산 자문 시스템의 프로필 추출
 
 규칙:
 - 언급되지 않은 필드는 포함하지 마세요
-- budget_manwon 단위는 만원 (6억 = 60000)
+- budget_manwon, own_funds_manwon, annual_income_manwon 단위는 만원 (6억 = 60000, 연소득 5,500만원 = 5500)
+- existing_debt_manwon은 기존 대출의 "월 원리금 부담"을 만원 단위로 (예: 월 50만원 = 50). 부채 없으면 0
+- is_first_buyer: 무주택·생애최초 주택 구매자면 true, 유주택자면 false
+- subscription_years: 청약저축/주택청약종합저축 가입 년수 (없으면 0)
 - school_priority: "low" | "medium" | "high"
 - preferred_type: "apartment" | "villa" | "officetel" | "any"
 - 숫자형 필드는 반드시 숫자로 반환 (문자열 금지)
@@ -406,6 +457,8 @@ def suggest_next_question(session: InterviewSession) -> str | None:
         return "총 구매 예산은 어느 정도 생각하고 계세요?"
     if p.own_funds_manwon == 0:
         return "그 중 자기자본(현금)은 얼마나 있으세요?"
+    if p.annual_income_manwon == 0:
+        return "부부합산 연소득이 어느 정도세요? (정책대출 자격 판정에 필요해요)"
     if p.monthly_payment_manwon == 0:
         return "매달 원리금으로 감당하실 수 있는 금액은 얼마 정도인가요?"
     if p.family_size <= 1:

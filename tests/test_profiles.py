@@ -20,8 +20,26 @@ class TestBuyerProfileDataclass:
         assert p.budget_manwon == 0
         assert p.own_funds_manwon == 0
         assert p.monthly_payment_manwon == 0
+        assert p.annual_income_manwon == 0
+        assert p.existing_debt_manwon == 0
+        assert p.is_first_buyer is True   # 생애 첫 주택 자문이라 기본값 True
+        assert p.subscription_years == 0
         assert p.family_size == 1
         assert p.residence_ratio == 100
+
+    def test_loan_advisor_fields_round_trip(self):
+        p = BuyerProfile(
+            annual_income_manwon=5500,
+            existing_debt_manwon=50,
+            is_first_buyer=False,
+            subscription_years=7,
+        )
+        d = p.to_dict()
+        p2 = BuyerProfile.from_dict(d)
+        assert p2.annual_income_manwon == 5500
+        assert p2.existing_debt_manwon == 50
+        assert p2.is_first_buyer is False
+        assert p2.subscription_years == 7
 
     def test_labels_translate_to_korean(self):
         p = BuyerProfile(
@@ -167,6 +185,34 @@ class TestFormatForAgents:
         assert "중개사" in text
         assert "재무설계사" in text
         assert "시장분석가" in text
+
+    def test_block_targets_loan_advisor(self):
+        p = BuyerProfile()
+        text = format_for_agents(p)
+        assert "대출상담사" in text
+
+    def test_block_includes_loan_advisor_fields(self):
+        p = BuyerProfile(
+            annual_income_manwon=5500,
+            existing_debt_manwon=50,
+            is_first_buyer=True,
+            subscription_years=5,
+        )
+        text = format_for_agents(p)
+        assert "5,500만원" in text     # 연소득
+        assert "50만원" in text         # 기존 부채
+        assert "생애최초" in text
+        assert "5년" in text             # 청약저축
+
+    def test_block_marks_non_first_buyer(self):
+        p = BuyerProfile(is_first_buyer=False)
+        text = format_for_agents(p)
+        assert "아님" in text or "보유" in text or "처분" in text
+
+    def test_block_no_debt_renders_as_없음(self):
+        p = BuyerProfile(existing_debt_manwon=0)
+        text = format_for_agents(p)
+        assert "없음" in text
 
     def test_size_formatted_with_pyeong(self):
         p = BuyerProfile(preferred_size_sqm=84.0)

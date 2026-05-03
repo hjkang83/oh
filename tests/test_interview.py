@@ -255,6 +255,36 @@ class TestExtractProfileHeuristic:
         updates = extract_profile_heuristic(text)
         assert updates.get("budget_manwon", 0) == 0
 
+    def test_extracts_annual_income(self):
+        text = "[user] 부부합산 연소득은 5,500만원이에요."
+        updates = extract_profile_heuristic(text)
+        assert updates.get("annual_income_manwon") == 5500
+
+    def test_extracts_annual_income_eok(self):
+        text = "[user] 연소득 1억 정도예요."
+        updates = extract_profile_heuristic(text)
+        assert updates.get("annual_income_manwon") == 10000
+
+    def test_extracts_existing_debt(self):
+        text = "[user] 기존 대출 월 50만원 있어요."
+        updates = extract_profile_heuristic(text)
+        assert updates.get("existing_debt_manwon") == 50
+
+    def test_extracts_first_buyer_explicit(self):
+        text = "[user] 생애최초 주택 구매자예요."
+        updates = extract_profile_heuristic(text)
+        assert updates.get("is_first_buyer") is True
+
+    def test_extracts_first_buyer_false_when_homeowner(self):
+        text = "[user] 이미 집이 있는데 갈아타려고요."
+        updates = extract_profile_heuristic(text)
+        assert updates.get("is_first_buyer") is False
+
+    def test_extracts_subscription_years(self):
+        text = "[user] 청약저축 5년 가입했어요."
+        updates = extract_profile_heuristic(text)
+        assert updates.get("subscription_years") == 5
+
 
 # ── apply_heuristic_to_session ────────────────────────────────────────────────
 
@@ -278,6 +308,20 @@ class TestApplyHeuristicToSession:
         sess.add_user("판교 출근입니다")
         apply_heuristic_to_session(sess)
         assert sess.profile.notes == "1층 제외"
+
+    def test_is_first_buyer_can_flip_to_false(self):
+        """기본값(True) 상태에서 '유주택' 멘션이 들어오면 False로 갱신된다."""
+        sess = InterviewSession()
+        assert sess.profile.is_first_buyer is True  # default
+        sess.add_user("이미 집이 있는데 갈아타려고요.")
+        apply_heuristic_to_session(sess)
+        assert sess.profile.is_first_buyer is False
+
+    def test_annual_income_propagates_to_profile(self):
+        sess = InterviewSession()
+        sess.add_user("판교 출근, 예산 6억, 부부합산 연소득 5,500만원")
+        apply_heuristic_to_session(sess)
+        assert sess.profile.annual_income_manwon == 5500
 
 
 # ── build_greeting ────────────────────────────────────────────────────────────
@@ -318,6 +362,7 @@ class TestSuggestNextQuestion:
             budget_manwon=60000,
             own_funds_manwon=20000,
             monthly_payment_manwon=180,
+            annual_income_manwon=5500,  # S4: 정책대출 자격 판정용
             family_size=2,
             preferred_area="마포",
             preferred_size_sqm=84.0,
@@ -325,3 +370,14 @@ class TestSuggestNextQuestion:
         )
         q = suggest_next_question(sess)
         assert q is None
+
+    def test_asks_annual_income_after_own_funds(self):
+        sess = InterviewSession()
+        sess.profile = BuyerProfile(
+            commute_location="판교",
+            budget_manwon=60000,
+            own_funds_manwon=20000,
+        )
+        q = suggest_next_question(sess)
+        assert q is not None
+        assert "연소득" in q or "소득" in q

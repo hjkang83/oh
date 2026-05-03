@@ -38,6 +38,10 @@ class BuyerProfile:
     budget_manwon: int = 0                # 총 구매 예산 (만원, 대출 포함). 0=미입력
     own_funds_manwon: int = 0             # 자기자본 (만원). 0=미입력
     monthly_payment_manwon: int = 0       # 월 원리금 감당 가능액 (만원). 0=미입력
+    annual_income_manwon: int = 0         # 부부합산 연소득 (만원). 0=미입력 — 대출상담사 자격 판정 핵심
+    existing_debt_manwon: int = 0         # 기존 월 원리금 부담 (만원). 0=없음 — DSR 산정용
+    is_first_buyer: bool = True           # 생애최초 주택 구매자 여부 — LTV 우대 적용
+    subscription_years: int = 0           # 청약저축 가입년수 — 참고용
     family_size: int = 1                  # 가족 수 (1=혼자, 2=부부, 3+=자녀 포함)
     has_children: bool = False            # 현재 자녀 있음
     plans_children: bool = False          # 자녀 계획 있음
@@ -178,6 +182,10 @@ def format_for_agents(profile: BuyerProfile | None) -> str:
         f"- 총 구매 예산: {_format_budget(profile.budget_manwon)}",
         f"- 자기자본: {_format_budget(profile.own_funds_manwon)}",
         f"- 월 원리금 감당 가능액: {_format_budget(profile.monthly_payment_manwon)}",
+        f"- 부부합산 연소득: {_format_budget(profile.annual_income_manwon)}",
+        f"- 기존 월 원리금 부담: {_format_budget(profile.existing_debt_manwon) if profile.existing_debt_manwon > 0 else '없음'}",
+        f"- 무주택·생애최초: {'생애최초' if profile.is_first_buyer else '아님 (기존 주택 보유 또는 처분 이력)'}",
+        f"- 청약저축 가입년수: {profile.subscription_years}년" if profile.subscription_years > 0 else "- 청약저축 가입년수: 미입력",
         f"- 가족 구성: {profile.family_label}",
         f"- 학군 중요도: {profile.school_priority_label}",
         f"- 선호 지역: {profile.preferred_area or '미입력'}",
@@ -192,7 +200,8 @@ def format_for_agents(profile: BuyerProfile | None) -> str:
     lines.append(
         "중개사는 출근지·예산·가족 구성을 기반으로 입지를 추천하세요. "
         "재무설계사는 예산·자기자본·월 감당액을 계산 인풋으로 활용하세요. "
-        "시장분석가는 선호 지역을 분석 대상으로 삼으세요."
+        "시장분석가는 선호 지역을 분석 대상으로 삼으세요. "
+        "대출상담사는 부부합산 연소득·기존 부채·생애최초 여부를 정책대출 자격 판정에 활용하세요."
     )
     lines.append("=== 프로필 끝 ===")
     return "\n".join(lines)
