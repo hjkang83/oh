@@ -23,6 +23,7 @@ class TestMockData:
             assert "broker" in turn, f"Turn {i}: missing broker"
             assert "financial" in turn, f"Turn {i}: missing financial"
             assert "analyst" in turn, f"Turn {i}: missing analyst"
+            assert "loan_advisor" in turn, f"Turn {i}: missing loan_advisor"
 
     def test_old_agent_keys_not_present(self):
         for turn in MOCK_TURNS:
@@ -34,6 +35,27 @@ class TestMockData:
         for turn in MOCK_TURNS:
             assert "[출처:" in turn["financial"], \
                 "재무설계사(financial) 응답에 출처 인용이 없습니다"
+
+    def test_loan_advisor_cites_sources(self):
+        for turn in MOCK_TURNS:
+            assert "[출처:" in turn["loan_advisor"], \
+                "대출상담사(loan_advisor) 응답에 출처 인용이 없습니다"
+
+    def test_loan_advisor_mentions_policy_loan(self):
+        """대출상담사 응답은 디딤돌·보금자리·생애최초 중 하나를 반드시 언급한다."""
+        joined = " ".join(t["loan_advisor"] for t in MOCK_TURNS)
+        assert "디딤돌" in joined
+        assert "보금자리" in joined
+        assert "생애최초" in joined
+
+    def test_loan_advisor_does_not_recommend_areas(self):
+        """대출상담사는 입지 추천을 하지 않는다 — 중개사 영역."""
+        for i, t in enumerate(MOCK_TURNS):
+            text = t["loan_advisor"]
+            forbidden = ["추천드", "동네 분위기", "교통이 편", "학군이 좋"]
+            for kw in forbidden:
+                assert kw not in text, \
+                    f"Turn {i} 대출상담사가 입지 자문 침범: '{kw}'"
 
     def test_analyst_raises_risk(self):
         risk_keywords = ["리스크", "위험", "고평가", "하방", "압력", "조정",
@@ -97,6 +119,7 @@ class TestMockDemoCLI:
         assert "중개사" in captured.out
         assert "재무설계사" in captured.out
         assert "시장분석가" in captured.out
+        assert "대출상담사" in captured.out
 
 
 class TestBuyerContextAwareness:

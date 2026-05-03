@@ -103,11 +103,11 @@ class TestMeetingInit:
 # ------------------------------------------------------------------
 
 class TestUserSays:
-    def test_returns_three_turns(self, meeting_no_api):
+    def test_returns_four_turns(self, meeting_no_api):
         turns = asyncio.get_event_loop().run_until_complete(
             meeting_no_api.user_says("수익률 3%면 낮은 거 아냐?")
         )
-        assert len(turns) == 3
+        assert len(turns) == 4
 
     def test_each_turn_has_required_fields(self, meeting_no_api):
         turns = asyncio.get_event_loop().run_until_complete(
@@ -127,13 +127,16 @@ class TestUserSays:
         keys = {t["agent_key"] for t in turns}
         assert keys == set(SPEAKERS)
 
+    def test_loan_advisor_in_speakers(self):
+        assert "loan_advisor" in SPEAKERS
+
     def test_transcript_grows(self, meeting_no_api):
         before = len(meeting_no_api.transcript)
         asyncio.get_event_loop().run_until_complete(
             meeting_no_api.user_says("첫 번째 질문")
         )
         after = len(meeting_no_api.transcript)
-        assert after == before + 4  # 1 user + 3 agents
+        assert after == before + 5  # 1 user + 4 agents
 
     def test_multi_turn_conversation(self, meeting_no_api):
         loop = asyncio.get_event_loop()
@@ -142,14 +145,14 @@ class TestUserSays:
         user_turns = [t for t in meeting_no_api.transcript if t["role"] == "user"]
         agent_turns = [t for t in meeting_no_api.transcript if t["role"] == "agent"]
         assert len(user_turns) >= 3  # topic + 2 user inputs (+ data blocks)
-        assert len(agent_turns) == 6  # 3 agents × 2 turns
+        assert len(agent_turns) == 8  # 4 agents × 2 turns
 
     def test_api_called_in_parallel(self, meeting_no_api):
         asyncio.get_event_loop().run_until_complete(
             meeting_no_api.user_says("테스트")
         )
         client = meeting_no_api.client
-        assert client.messages.create.call_count == 3
+        assert client.messages.create.call_count == 4
 
     def test_response_text_captured(self, meeting_no_api):
         turns = asyncio.get_event_loop().run_until_complete(
@@ -318,19 +321,20 @@ class TestAgentErrorHandling:
         client = meeting_no_api.client
         client.messages.create = AsyncMock(
             side_effect=[
-                _mock_response("CFO 정상 응답"),
+                _mock_response("중개사 정상 응답"),
                 RuntimeError("API 장애"),
-                _mock_response("투자컨설턴트 정상 응답"),
+                _mock_response("시장분석가 정상 응답"),
+                _mock_response("대출상담사 정상 응답"),
             ]
         )
         turns = asyncio.get_event_loop().run_until_complete(
             meeting_no_api.user_says("테스트")
         )
-        assert len(turns) == 3
+        assert len(turns) == 4
         failed = [t for t in turns if "실패" in t["text"]]
         assert len(failed) == 1
         ok = [t for t in turns if "실패" not in t["text"]]
-        assert len(ok) == 2
+        assert len(ok) == 3
 
 
 # ------------------------------------------------------------------
@@ -485,17 +489,18 @@ class TestProfileIntegration:
 # ------------------------------------------------------------------
 
 class TestSourceValidatorIntegration:
-    """CFO turn에 [출처:] 누락된 수치가 있으면 turn['warnings']에 부착되는지."""
+    """financial·loan_advisor turn에 [출처:] 누락된 수치가 있으면 turn['warnings']에 부착되는지."""
 
     def _drive(self, meeting, cfo_text: str, cso_text: str = "analyst ok",
-               mentor_text: str = "broker ok"):
-        # SPEAKERS = ["broker", "financial", "analyst"]
-        # financial (index 1) is the agent that gets source-citation warnings.
+               mentor_text: str = "broker ok", loan_text: str = "loan ok [출처: 한국주택금융공사]"):
+        # SPEAKERS = ["broker", "financial", "analyst", "loan_advisor"]
+        # financial과 loan_advisor가 source-citation guard 대상.
         meeting.client.messages.create = AsyncMock(
             side_effect=[
                 _mock_response(mentor_text),  # broker (1st)
                 _mock_response(cfo_text),     # financial (2nd) ← warning target
                 _mock_response(cso_text),     # analyst (3rd)
+                _mock_response(loan_text),    # loan_advisor (4th) ← warning target
             ]
         )
         return asyncio.get_event_loop().run_until_complete(
@@ -545,12 +550,13 @@ class TestSourceValidatorIntegration:
         assert broker["warnings"] == []
 
     def test_failed_cfo_response_has_no_warnings(self, meeting_no_api):
-        # SPEAKERS = ["broker", "financial", "analyst"]; financial is 2nd
+        # SPEAKERS = ["broker", "financial", "analyst", "loan_advisor"]
         meeting_no_api.client.messages.create = AsyncMock(
             side_effect=[
                 _mock_response("broker ok"),
                 RuntimeError("API 장애"),   # financial fails
                 _mock_response("analyst ok"),
+                _mock_response("loan_advisor ok [출처: x]"),
             ]
         )
         turns = asyncio.get_event_loop().run_until_complete(
@@ -566,6 +572,25 @@ class TestSourceValidatorIntegration:
         )
         financial = next(t for t in turns if t["agent_key"] == "financial")
         assert len(financial["warnings"]) == 2
+
+    def test_loan_advisor_with_source_has_no_warnings(self, meeting_no_api):
+        turns = self._drive(
+            meeting_no_api,
+            cfo_text="ok [출처: x]",
+            loan_text="LTV 80% [출처: 금융위원회 2024].",
+        )
+        loan = next(t for t in turns if t["agent_key"] == "loan_advisor")
+        assert loan["warnings"] == []
+
+    def test_loan_advisor_without_source_has_warning(self, meeting_no_api):
+        turns = self._drive(
+            meeting_no_api,
+            cfo_text="ok [출처: x]",
+            loan_text="디딤돌 금리 3.55% 가능합니다.",  # 출처 누락
+        )
+        loan = next(t for t in turns if t["agent_key"] == "loan_advisor")
+        assert len(loan["warnings"]) == 1
+        assert "3.55%" in loan["warnings"][0]
 
 
 # ------------------------------------------------------------------

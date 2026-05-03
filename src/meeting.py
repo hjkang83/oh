@@ -52,7 +52,7 @@ from yield_analyzer import (
 from scenario import format_full_scenario_for_agents
 
 MEETINGS_DIR = Path(__file__).resolve().parent.parent / "meetings"
-SPEAKERS: list[str] = ["broker", "financial", "analyst"]
+SPEAKERS: list[str] = ["broker", "financial", "analyst", "loan_advisor"]
 CLERK_KEY = "clerk"
 DEFAULT_MODEL = "claude-sonnet-4-6"
 
@@ -330,10 +330,11 @@ class Meeting:
                 text_out = f"(응답 생성 실패: {type(result).__name__}: {result})"
             else:
                 text_out = result
-            # Phase B.2: source-citation guard for CFO only.
+            # Phase B.2: source-citation guard for 출처 의무 에이전트.
             # MANIFESTO 가치 1 — 페르소나가 출처를 깜빡해도 코드가 잡아낸다.
+            # financial(자금)·loan_advisor(정책대출) 둘 다 모든 수치에 출처 의무.
             warnings: list[str] = []
-            if key == "financial" and not failed:
+            if key in ("financial", "loan_advisor") and not failed:
                 warnings = [w.message for w in validate_text(text_out)]
             turn = {
                 "role": "agent",

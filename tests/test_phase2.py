@@ -250,8 +250,8 @@ class TestDebateMode:
                 m.user_says_with_debate("질문", rounds=2)
             )
         assert len(rounds) == 2
-        assert len(rounds[0]) == 3
-        assert len(rounds[1]) == 3
+        assert len(rounds[0]) == 4
+        assert len(rounds[1]) == 4
 
     def test_debate_transcript_has_nudge(self):
         client = MagicMock()
@@ -279,7 +279,7 @@ class TestDebateMode:
                 m.user_says_with_debate("질문", rounds=1)
             )
         assert len(rounds) == 1
-        assert len(rounds[0]) == 3
+        assert len(rounds[0]) == 4
 
 
 # ── Charts (import check) ──
