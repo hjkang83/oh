@@ -1,5 +1,22 @@
 # PLAN — 대출상담사 4번째 에이전트 신설
 
+> ⚠️ **Status: SUPERSEDED / HISTORICAL** (2026-05-04)
+>
+> 본 PLAN은 4인 자문 시스템 빌드 (S1~S5)의 설계 문서로, **2026-05-04 5인 검증 시스템으로의 B안 전면 피보팅 결정으로 superseded** 됐다.
+>
+> 새 빌드 플랜: [`docs/PLAN_pivot_to_verifier.md`](PLAN_pivot_to_verifier.md)
+> 새 컨셉 단일 진실원: [`docs/SCENARIO_v1.md`](SCENARIO_v1.md)
+>
+> 본 PLAN의 산출물(S1~S5)은 main에 머지된 상태이며, B안 피보팅 시 코드는 다음과 같이 매핑·재정의된다:
+> - `loan_advisor` → `finance_analyst`에 통합 (정책대출은 재무 분석가의 한 측면)
+> - `agents/loan_advisor.md`, `src/loan_products.py`, `src/loan_calc.py`는 새 5인 구성 하에서 재사용 또는 재구성
+>
+> 이 문서는 4인 자문 빌드의 의사결정 과정·근거를 보존하기 위해 유지된다.
+
+---
+
+## 이하 원본 (피보팅 이전 작성, 보존용)
+
 > /office-hours 결과 (2026-04-30). 3인 자문 → 4인 자문으로 확장. D2 wow 포인트("3인이 겁니다하는 당신의 예산")를 4번째 페르소나로 직격.
 
 ## Decision

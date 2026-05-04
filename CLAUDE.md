@@ -2,8 +2,11 @@
 
 ## 프로젝트 개요
 
-Data 기반 Multi-Agent 생애 첫 주택 구매 자문 시스템 (KAIST IMMS MBA).
-MC 인터뷰어가 BuyerProfile을 수집하고, 중개사·재무설계사·시장분석가 3인이 국토부 실거래 데이터 기반으로 3단계 자문(인터뷰 → 전문 자문 → 호가 적정성)을 제공한다.
+**부동산 검증 AI 에이전트** (KAIST IMMS MBA).
+점찍어둔 아파트 한 채에 대해 **5명의 분석가(시세·입지·리스크·재무·미래가치)가 다관점 검증**을 수행해, 사용자가 인생에서 가장 큰 거래를 후회 없이 결정하도록 돕는 **"Second Opinion"** 시스템.
+
+> 컨셉 단일 진실원: [`docs/SCENARIO_v1.md`](docs/SCENARIO_v1.md)
+> 현재 상태: 기존 4인 자문 시스템(`broker`/`financial`/`analyst`/`loan_advisor`)에서 **5인 검증 시스템으로 B안 전면 피보팅 진행 중** ([`docs/PLAN_pivot_to_verifier.md`](docs/PLAN_pivot_to_verifier.md)).
 
 ## 작업 방식
 
@@ -31,14 +34,29 @@ MC 인터뷰어가 BuyerProfile을 수집하고, 중개사·재무설계사·시
 - 작업 브랜치에서 개발 → PR 생성 → **squash merge**로 main에 반영.
 - 커밋 메시지는 conventional commits 스타일: `feat:`, `fix:`, `refactor:`, `test:`, `docs:`.
 - 푸시 실패 시 rebase 후 재시도. 네트워크 오류는 최대 4회 지수 백오프 재시도.
-- 각 스테이지 완료 후 **바로 커밋+푸시** — 다음 스테이지를 시작하기 전에 현재 작업을 안전하게 저장.
+- 각 Phase 완료 후 **바로 커밋+푸시** — 다음 Phase 시작 전에 현재 작업을 안전하게 저장.
+
+### 5. 아웃풋부터 역산 (시나리오 v1 방법론)
+
+본 프로젝트는 **"아웃풋 이미지부터 역산"** 방법론을 따른다 ([`docs/SCENARIO_v1.md`](docs/SCENARIO_v1.md) 참조).
+
+```
+1. 최종 아웃풋 이미지 정의
+2. 필요한 분석 결과 도출
+3. 필요한 에이전트 구성 결정
+4. 필요한 데이터·API 검증
+5. 인터뷰 질문 설계
+```
+
+신규 기능 제안 시 **"이 기능이 종합 리포트 한 화면에 어떤 형태로 보이는가?"부터 그려보고**, 그릴 수 없으면 다시 생각.
 
 ## 기술 스택
 
 - **언어**: Python 3.10+
 - **LLM**: Anthropic Claude API (`claude-sonnet-4-6`), `AsyncAnthropic`
-- **테스트**: pytest (602 tests), API 키 없이 전체 로직 검증 (E2E + 경계 + 할루시네이션 가드)
+- **테스트**: pytest, API 키 없이 전체 로직 검증 (E2E + 경계 + 할루시네이션 가드)
 - **프론트엔드**: Streamlit
+- **외부 API**: 국토교통부 실거래가 (시세) / Kakao Local (Phase 3 주소·지도)
 - **의존성**: requirements.txt 참조
 
 ## 프로젝트 구조
@@ -46,59 +64,65 @@ MC 인터뷰어가 BuyerProfile을 수집하고, 중개사·재무설계사·시
 ```
 src/           # 소스 코드 (app.py Streamlit UI, meeting.py 오케스트레이터 등)
 agents/        # 페르소나 명세서 (*.md) — 프롬프트 튜닝은 여기서
-tests/         # pytest 테스트 스위트 (602 tests)
-meetings/      # 상담록 저장 디렉토리
-docs/          # 설계 문서 (MANIFESTO, WHYTREE, PREMORTEM)
+tests/         # pytest 테스트 스위트
+meetings/      # 종합 리포트(상담록) 저장 디렉토리
+docs/          # 설계 문서 (SCENARIO_v1, MANIFESTO, WHYTREE, PREMORTEM, PLAN_pivot_to_verifier)
 COMPARISON.md  # ChatGPT 비교 시연 자료
 glossary.md    # 용어집
 ```
 
 ## 핵심 규칙
 
+- **컨셉 변경은 `docs/SCENARIO_v1.md`를 먼저 갱신**한 후 코드 반영. 시나리오와 코드의 정합성이 단일 진실원 원칙.
 - 에이전트 페르소나 수정은 `agents/*.md` 파일 편집으로 한다 (코드 변경 아님).
-- 내부 코드 키(`"broker"`, `"financial"`, `"analyst"`, `"clerk"`)는 변경하지 않는다.
+- **신규 5인 분석가의 내부 코드 키**는 다음으로 통일 (Phase 1 이후 적용):
+  - `market_analyst` (시세) / `location_analyst` (입지) / `risk_analyst` (리스크) / `finance_analyst` (재무) / `future_analyst` (미래가치)
+  - 보조: `mc` (인터뷰어) / `clerk` (서기·종합 리포터)
 - 사용자 표시용 이름은 `src/personas.py`의 `AGENT_CONFIG`에서 관리한다.
-- 모든 수치에는 출처를 명시한다 (MANIFESTO 핵심 가치 1번).
+- **모든 수치에는 출처를 명시한다** (MANIFESTO 핵심 가치 1번).
 
-## 주요 모듈
+## 주요 모듈 (피보팅 진행 중 — Phase 1 이후 갱신 예정)
 
 | 모듈 | 역할 |
 |------|------|
-| `src/app.py` | Streamlit 3단계 UI (Stage 1~3 + 상담록 Tab) |
-| `src/meeting.py` | 에이전트 오케스트레이터 (asyncio.gather 병렬 호출) |
-| `src/interview.py` | MC 인터뷰 엔진 (BuyerProfile 수집, 완성도 점수) |
-| `src/profiles.py` | BuyerProfile 데이터클래스 |
-| `src/personas.py` | 페르소나 로더 + 시스템 프롬프트 빌더 |
+| `src/app.py` | Streamlit UI (현재: 3-tab / 피보팅 후: 7-scene 플로우) |
+| `src/meeting.py` | 에이전트 오케스트레이터 (현재 4인 → 5인 변경 예정) |
+| `src/interview.py` | MC 인터뷰 엔진 (현재 9개 질문 → 5~6개 단축 예정) |
+| `src/profiles.py` | BuyerProfile 데이터클래스 (필드 재정의 예정) |
+| `src/personas.py` | 페르소나 로더 + 시스템 프롬프트 빌더 (5인 키 갱신 예정) |
 | `src/molit_api.py` | 국토교통부 실거래가 API + P50 산출 + 출처 자동 생성 |
-| `src/crawler.py` | 호갱노노·네이버부동산 크롤러 (CrawlerBlockedError graceful fallback) |
-| `src/property_audit.py` | 호가 적정성 평가 (P50 분포 기반) |
-| `src/demo_mock.py` | API 키 없이 Gold Standard 데모 |
+| `src/property_audit.py` | 호가 적정성 평가 (시세 분석가가 활용) |
+| `src/demo_mock.py` | API 키 없이 Gold Standard 데모 (5인 응답으로 갱신 예정) |
+| (신규) `src/scorecard.py` | 5인 별점 합의 + 종합 결론 산출 (Phase 4) |
+| (신규) `src/address_lookup.py` | Kakao Local 주소 변환 + 지도 (Phase 3) |
+| (신규) `src/pdf_export.py` | 종합 리포트 PDF 저장·공유 (Phase 5) |
 
 ## 테스트 실행
 
 ```bash
-pytest tests/ -v              # 전체 테스트 (602)
+pytest tests/ -v              # 전체 테스트
 pytest tests/test_e2e.py -v   # E2E 파이프라인 테스트
-python src/demo_mock.py       # API 키 없이 Mock 데모 (Gold Standard)
-streamlit run src/app.py      # Streamlit Web UI (3단계 플로우)
+python src/demo_mock.py       # API 키 없이 Mock 데모
+streamlit run src/app.py      # Streamlit Web UI
 ```
 
 ## 세션 관리
 
 - 세션 시작 시 **반드시 `git fetch && git pull origin main`** 먼저 실행 — GitHub 웹 수정을 놓치지 않는다.
 - 최근 커밋 5개를 확인하고, 이전 세션에서 중단된 작업이 있는지 파악한 후 작업을 시작한다.
-- 한 세션에서 1~2개 스테이지만 완결하는 것을 목표로 한다 — 4개를 시작하는 것보다 2개를 완결하는 게 ��다.
+- 한 세션에서 1~2개 Phase만 완결하는 것을 목표로 한다 — 4개를 시작하는 것보다 2개를 완결하는 게 낫다.
 
 ## 페르소나 리팩터 규칙
 
 - 페르소나 명세서(`agents/*.md`)를 수정할 때는 **반드시** 관련 테스트 키워드도 동시에 갱신한다.
-- 영향받는 파일: `tests/test_personas.py`, `tests/test_demo_mock.py`, `src/demo_mock.py`의 Gold Standard, `src/personas.py`의 DIVERSITY_ANGLES
+- 영향받는 파일: `tests/test_personas.py`, `tests/test_demo_mock.py`, `src/demo_mock.py`의 Gold Standard, `src/personas.py`의 `DIVERSITY_ANGLES`
 - 페르소나만 수정하고 테스트를 나중에 고치지 않는다 — 한 커밋에 같이 반영.
 
 ## 환경 변수
 
 - `ANTHROPIC_API_KEY`: 실제 API 데모 및 에이전트 응답 생성에 필수. 없으면 Mock 데모만 가능.
-- `DATA_GO_KR_API_KEY`: 국토교통부 실거래가 API 호출에 필요. 없으면 샘플 데���터 자동 fallback.
+- `DATA_GO_KR_API_KEY`: 국토교통부 실거래가 API 호출에 필요. 없으면 샘플 데이터 자동 fallback.
+- `KAKAO_REST_API_KEY`: (Phase 3 예정) 주소 변환·지도 표시.
 - API 키가 없을 때는 즉시 사용자에게 알리고, 조용히 mock으로 대체하지 않는다.
 
 ## Custom Skills

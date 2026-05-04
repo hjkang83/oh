@@ -1,4 +1,18 @@
 # Heritage Agent Manifest
+
+> ⚠️ **Status: ARCHIVED / UNRELATED PROJECT** (2026-05-04)
+>
+> 본 문서는 **이전 프로젝트(유적지 AI 가이드, "heritage-agent")**의 manifest다. 현재 프로젝트(부동산 검증 AI 에이전트)와는 무관하다.
+>
+> 현재 프로젝트의 manifesto: [`docs/MANIFESTO.md`](MANIFESTO.md)
+> 컨셉 단일 진실원: [`docs/SCENARIO_v1.md`](SCENARIO_v1.md)
+>
+> 본 문서는 팀의 프로젝트 변천(유적지 → 부동산) 이력 보존용으로 유지된다. 현재 코드·작업 가이드와 정합성을 맞출 의무는 없다.
+
+---
+
+## 이하 원본 (heritage-agent 프로젝트 시기 작성, 보존용)
+
 > 우리가 왜 이걸 만드는지, 어떤 기준으로 결정하는지에 대한 약속
 
 ---
