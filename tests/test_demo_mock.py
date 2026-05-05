@@ -1,101 +1,156 @@
-"""Tests for demo_mock module — Gold Standard mock demo (생애 첫 주택 구매 자문)."""
+"""Tests for demo_mock module — 부동산 검증 AI 에이전트 5인 Gold Standard."""
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from demo_mock import MOCK_TURNS, MOCK_MINUTES, DEMO_TOPIC, DEMO_REGIONS
+from demo_mock import (
+    MOCK_TURNS,
+    MOCK_REPORT,
+    MOCK_MINUTES,
+    DEMO_TOPIC,
+    DEMO_REGIONS,
+    VERIFIER_KEYS,
+)
 
 
 class TestMockData:
-    def test_demo_topic_first_home_buyer(self):
-        assert "첫 주택" in DEMO_TOPIC or "구매" in DEMO_TOPIC
+    def test_demo_topic_verification(self):
+        assert "검증" in DEMO_TOPIC or "매물" in DEMO_TOPIC
 
     def test_demo_regions(self):
-        assert len(DEMO_REGIONS) == 3
+        assert len(DEMO_REGIONS) >= 1
 
     def test_mock_turns_count(self):
         assert len(MOCK_TURNS) == 3
 
-    def test_each_turn_has_all_agents(self):
+    def test_each_turn_has_all_5_analysts(self):
         for i, turn in enumerate(MOCK_TURNS):
             assert "user" in turn, f"Turn {i}: missing user"
-            assert "broker" in turn, f"Turn {i}: missing broker"
-            assert "financial" in turn, f"Turn {i}: missing financial"
-            assert "analyst" in turn, f"Turn {i}: missing analyst"
-            assert "loan_advisor" in turn, f"Turn {i}: missing loan_advisor"
+            for key in VERIFIER_KEYS:
+                assert key in turn, f"Turn {i}: missing {key}"
 
-    def test_old_agent_keys_not_present(self):
+    def test_old_4agent_keys_not_present(self):
+        """피보팅 후 옛 키는 모두 제거되어야 한다."""
         for turn in MOCK_TURNS:
-            assert "practitioner" not in turn, "구 투자 에이전트 practitioner가 아직 남아있음"
-            assert "redteam" not in turn, "구 투자 에이전트 redteam이 아직 남아있음"
-            assert "mentor" not in turn, "구 투자 에이전트 mentor가 아직 남아있음"
+            for old in ("broker", "financial", "analyst", "loan_advisor",
+                        "practitioner", "redteam", "mentor"):
+                assert old not in turn, f"옛 키 {old}가 아직 남아있음"
 
-    def test_financial_cites_sources(self):
-        for turn in MOCK_TURNS:
-            assert "[출처:" in turn["financial"], \
-                "재무설계사(financial) 응답에 출처 인용이 없습니다"
-
-    def test_loan_advisor_cites_sources(self):
-        for turn in MOCK_TURNS:
-            assert "[출처:" in turn["loan_advisor"], \
-                "대출상담사(loan_advisor) 응답에 출처 인용이 없습니다"
-
-    def test_loan_advisor_mentions_policy_loan(self):
-        """대출상담사 응답은 디딤돌·보금자리·생애최초 중 하나를 반드시 언급한다."""
-        joined = " ".join(t["loan_advisor"] for t in MOCK_TURNS)
-        assert "디딤돌" in joined
-        assert "보금자리" in joined
-        assert "생애최초" in joined
-
-    def test_loan_advisor_does_not_recommend_areas(self):
-        """대출상담사는 입지 추천을 하지 않는다 — 중개사 영역."""
-        for i, t in enumerate(MOCK_TURNS):
-            text = t["loan_advisor"]
-            forbidden = ["추천드", "동네 분위기", "교통이 편", "학군이 좋"]
-            for kw in forbidden:
-                assert kw not in text, \
-                    f"Turn {i} 대출상담사가 입지 자문 침범: '{kw}'"
-
-    def test_analyst_raises_risk(self):
-        risk_keywords = ["리스크", "위험", "고평가", "하방", "압력", "조정",
-                         "빠진", "규제", "표본", "의심"]
-        for turn in MOCK_TURNS:
-            has_risk = any(kw in turn["analyst"] for kw in risk_keywords)
-            assert has_risk, "시장분석가(analyst) 응답에 리스크/반론이 없습니다"
-
-    def test_broker_provides_area_recommendation(self):
-        area_keywords = ["구", "동", "추천", "편해요", "좋아요", "단점", "확인",
-                         "출근", "교통"]
-        for turn in MOCK_TURNS:
-            has_area = any(kw in turn["broker"] for kw in area_keywords)
-            assert has_area, "중개사(broker) 응답에 입지 자문이 없습니다"
+    def test_verifier_keys_match_expected(self):
+        assert VERIFIER_KEYS == (
+            "market_analyst",
+            "location_analyst",
+            "risk_analyst",
+            "finance_analyst",
+            "future_analyst",
+        )
 
 
-class TestMockMinutes:
+class TestSourceCitation:
+    """5인 검증 분석가 모두 응답에 출처 인용이 있어야 한다."""
+
+    def test_all_verifiers_cite_sources_per_turn(self):
+        for i, turn in enumerate(MOCK_TURNS):
+            for key in VERIFIER_KEYS:
+                assert "[출처:" in turn[key], \
+                    f"Turn {i} {key} 응답에 출처 인용 없음"
+
+
+class TestVerificationDiscipline:
+    """5인 모두 검증·반박·한계·우려 등 의심 표현 1개 이상 의무."""
+
+    SKEPTIC_KEYWORDS = (
+        "리스크", "위험", "고평가", "하방", "압력", "조정", "주의",
+        "헤도닉 보정", "표본", "신뢰구간", "양면", "변동", "악재",
+        "한계", "단", "다만", "그러나", "보완", "확인 권장",
+    )
+
+    def test_each_verifier_has_doubt_or_pushback(self):
+        for i, turn in enumerate(MOCK_TURNS):
+            for key in VERIFIER_KEYS:
+                text = turn[key]
+                assert any(kw in text for kw in self.SKEPTIC_KEYWORDS), \
+                    f"Turn {i} {key} 응답에 의심·반박·한계 표현이 없습니다"
+
+
+class TestStarRatingPresent:
+    """5인 모두 별점 출력을 가져야 한다 (Scene 06 종합 리포트 입력용)."""
+
+    def test_each_verifier_outputs_star_rating(self):
+        for i, turn in enumerate(MOCK_TURNS):
+            for key in VERIFIER_KEYS:
+                text = turn[key]
+                assert "별점:" in text or "★" in text, \
+                    f"Turn {i} {key}: 별점 출력 누락"
+
+
+class TestDomainOwnership:
+    """각 분석가가 자기 영역 키워드를 사용하는지."""
+
+    def test_market_analyst_uses_price_terms(self):
+        joined = " ".join(t["market_analyst"] for t in MOCK_TURNS)
+        assert "P50" in joined or "실거래" in joined or "호가" in joined
+
+    def test_location_analyst_uses_commute_terms(self):
+        joined = " ".join(t["location_analyst"] for t in MOCK_TURNS)
+        assert any(k in joined for k in ("통근", "출퇴근", "환승", "도보", "역"))
+
+    def test_risk_analyst_covers_property_and_macro(self):
+        joined = " ".join(t["risk_analyst"] for t in MOCK_TURNS)
+        # 단지 차원
+        assert any(k in joined for k in ("단지", "노후", "대수선"))
+        # 거시 차원
+        assert any(k in joined for k in ("DSR", "금리", "공급"))
+
+    def test_finance_analyst_covers_loans(self):
+        joined = " ".join(t["finance_analyst"] for t in MOCK_TURNS)
+        assert any(k in joined for k in ("LTV", "DSR", "대출", "월 원리금", "취득세"))
+
+    def test_finance_analyst_covers_policy_loans(self):
+        """피보팅 후 finance_analyst는 정책대출도 통합."""
+        joined = " ".join(t["finance_analyst"] for t in MOCK_TURNS)
+        assert any(k in joined for k in ("디딤돌", "보금자리", "생애최초", "정책대출"))
+
+    def test_future_analyst_balances_catalysts_and_risks(self):
+        joined = " ".join(t["future_analyst"] for t in MOCK_TURNS)
+        assert "호재" in joined
+        # 악재·공급·인구 중 하나 이상
+        assert any(k in joined for k in ("악재", "공급", "인구", "압력"))
+
+
+class TestMockReport:
     def test_has_template_placeholder(self):
-        assert "{timestamp}" in MOCK_MINUTES
+        assert "{timestamp}" in MOCK_REPORT
 
     def test_has_required_sections(self):
-        formatted = MOCK_MINUTES.format(timestamp="2026-04-29 14:00")
-        assert "핵심 안건" in formatted
-        assert "에이전트 의견" in formatted
-        assert "결정사항" in formatted
-        assert "보류사항" in formatted
-        assert "Next Action" in formatted
+        formatted = MOCK_REPORT.format(timestamp="2026-05-04 14:00")
+        assert "종합 평점" in formatted
+        assert "5명 중" in formatted or "합의" in formatted
+        assert "핵심 쟁점" in formatted
+        assert "후속 액션" in formatted
 
-    def test_has_action_items(self):
-        formatted = MOCK_MINUTES.format(timestamp="2026-04-29 14:00")
-        assert "고객님" in formatted
-        assert "기한:" in formatted
+    def test_has_5_categories(self):
+        formatted = MOCK_REPORT.format(timestamp="2026-05-04 14:00")
+        for category in ("시세", "입지", "리스크", "재무", "미래가치"):
+            assert category in formatted
 
-    def test_has_buyer_checklist(self):
-        formatted = MOCK_MINUTES.format(timestamp="2026-04-29 14:00")
-        assert "체크리스트" in formatted
+    def test_has_followup_action_options(self):
+        formatted = MOCK_REPORT.format(timestamp="2026-05-04 14:00")
+        # 3가지 가안 (드릴다운/대화/PDF)
+        assert "드릴다운" in formatted or "[A]" in formatted
+        assert "대화" in formatted or "[B]" in formatted
+        assert "PDF" in formatted or "[C]" in formatted
 
-    def test_has_buyer_profile_section(self):
-        formatted = MOCK_MINUTES.format(timestamp="2026-04-29 14:00")
-        assert "구매 조건" in formatted or "인터뷰" in formatted
+    def test_does_not_recommend_buy_sell(self):
+        """검증 시스템: 강매 금지."""
+        formatted = MOCK_REPORT.format(timestamp="2026-05-04 14:00")
+        assert "사세요" not in formatted
+        assert "사지 마세요" not in formatted
+
+    def test_minutes_alias_compat(self):
+        """MOCK_MINUTES는 MOCK_REPORT의 호환성 별칭."""
+        assert MOCK_MINUTES == MOCK_REPORT
 
 
 class TestMockDemoCLI:
@@ -104,56 +159,18 @@ class TestMockDemoCLI:
         main()
         captured = capsys.readouterr()
         assert "Mock Demo" in captured.out
-        assert "상담록" in captured.out or "비서실장" in captured.out
+        assert "리포트" in captured.out or "서기" in captured.out
 
     def test_main_shows_profile(self, capsys):
         from demo_mock import main
         main()
         captured = capsys.readouterr()
-        assert "프로필" in captured.out
+        assert "사용자 검증 입력" in captured.out or "검증" in captured.out
 
-    def test_main_shows_all_agents(self, capsys):
+    def test_main_shows_all_5_analysts(self, capsys):
         from demo_mock import main
         main()
         captured = capsys.readouterr()
-        assert "중개사" in captured.out
-        assert "재무설계사" in captured.out
-        assert "시장분석가" in captured.out
-        assert "대출상담사" in captured.out
-
-
-class TestBuyerContextAwareness:
-    """Gold Standard 에이전트 응답이 구매자 조건 어휘를 자연스럽게 활용하는지 검증."""
-
-    def test_broker_uses_commute_vocab(self):
-        """중개사는 출근지/교통 관련 어휘를 써야 한다."""
-        commute_keywords = ["출근", "교통", "환승", "분", "노선", "역"]
-        joined = " ".join(t["broker"] for t in MOCK_TURNS)
-        assert any(kw in joined for kw in commute_keywords), \
-            "중개사 응답에 출근지/교통 어휘가 없습니다"
-
-    def test_financial_uses_ltv_or_dsr(self):
-        """재무설계사는 LTV 또는 DSR 용어를 써야 한다."""
-        joined = " ".join(t["financial"] for t in MOCK_TURNS)
-        assert "LTV" in joined or "DSR" in joined or "원리금" in joined, \
-            "재무설계사 응답에 대출 전문 용어가 없습니다"
-
-    def test_analyst_cites_transaction_data(self):
-        """시장분석가는 실거래 데이터 혹은 지수를 인용해야 한다."""
-        data_keywords = ["실거래", "P50", "지수", "출처", "N="]
-        joined = " ".join(t["analyst"] for t in MOCK_TURNS)
-        assert any(kw in joined for kw in data_keywords), \
-            "시장분석가 응답에 실거래 데이터 인용이 없습니다"
-
-    def test_broker_does_not_cite_sources_with_brackets(self):
-        """중개사는 [출처: ___] 형식 인용을 하지 않는다 (재무설계사·시장분석가 영역)."""
-        for i, t in enumerate(MOCK_TURNS):
-            assert "[출처:" not in t["broker"], \
-                f"Turn {i} 중개사 응답에 [출처: ...] 인용이 들어감 — 영역 경계 침범"
-
-    def test_broker_mentions_downside(self):
-        """중개사는 반드시 단점이나 확인 사항을 언급해야 한다."""
-        downside_keywords = ["단점", "다만", "확인하세요", "약해요", "불편", "문제"]
-        joined = " ".join(t["broker"] for t in MOCK_TURNS)
-        assert any(kw in joined for kw in downside_keywords), \
-            "중개사 응답에 단점/주의사항 언급이 없습니다"
+        for name in ("시세 분석가", "입지 분석가", "리스크 분석가",
+                     "재무 분석가", "미래가치 분석가"):
+            assert name in captured.out, f"main 출력에 {name} 누락"

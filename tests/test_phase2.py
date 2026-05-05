@@ -205,28 +205,28 @@ class TestConsensus:
 
 class TestDiversityAngles:
     def test_angles_defined(self):
-        assert "broker" in DIVERSITY_ANGLES
-        assert "financial" in DIVERSITY_ANGLES
-        assert "analyst" in DIVERSITY_ANGLES
+        for key in ("market_analyst", "location_analyst", "risk_analyst",
+                    "finance_analyst", "future_analyst"):
+            assert key in DIVERSITY_ANGLES
 
     def test_reminder_with_unused(self):
-        reminder = build_diversity_reminder("broker", ["입지추천", "동네분위기"])
+        reminder = build_diversity_reminder("location_analyst", ["통근시간"])
         assert "다양성 리마인더" in reminder
-        assert "학군" in reminder or "교통" in reminder
+        assert "학군배정" in reminder or "환승횟수" in reminder or "도보거리" in reminder
 
     def test_reminder_all_used(self):
-        all_angles = DIVERSITY_ANGLES["broker"]
-        reminder = build_diversity_reminder("broker", all_angles)
+        all_angles = DIVERSITY_ANGLES["location_analyst"]
+        reminder = build_diversity_reminder("location_analyst", all_angles)
         assert reminder == ""
 
     def test_detect_angles(self):
-        text = "입지추천과 교통 분석을 해봤습니다..."
-        angles = detect_used_angles("broker", text)
-        assert "입지추천" in angles
-        assert "교통" in angles
+        text = "통근시간과 환승횟수를 검토했습니다..."
+        angles = detect_used_angles("location_analyst", text)
+        assert "통근시간" in angles
+        assert "환승횟수" in angles
 
     def test_detect_no_match(self):
-        angles = detect_used_angles("broker", "일반적인 의견입니다.")
+        angles = detect_used_angles("location_analyst", "일반적인 의견입니다.")
         assert len(angles) == 0
 
 
@@ -250,8 +250,8 @@ class TestDebateMode:
                 m.user_says_with_debate("질문", rounds=2)
             )
         assert len(rounds) == 2
-        assert len(rounds[0]) == 4
-        assert len(rounds[1]) == 4
+        assert len(rounds[0]) == 5
+        assert len(rounds[1]) == 5
 
     def test_debate_transcript_has_nudge(self):
         client = MagicMock()
@@ -279,7 +279,7 @@ class TestDebateMode:
                 m.user_says_with_debate("질문", rounds=1)
             )
         assert len(rounds) == 1
-        assert len(rounds[0]) == 4
+        assert len(rounds[0]) == 5
 
 
 # ── Charts (import check) ──

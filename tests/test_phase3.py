@@ -130,21 +130,23 @@ class TestDemoMockIntegration:
         )
         assert result.returncode == 0
 
-    def test_demo_mock_shows_minutes(self):
+    def test_demo_mock_shows_summary_report(self):
+        """Phase 1 피보팅 후 상담록 → 종합 리포트로 변경."""
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
-        assert "비서실장" in result.stdout or "상담록" in result.stdout
+        assert "서기" in result.stdout or "리포트" in result.stdout
 
-    def test_demo_mock_shows_checklist(self):
+    def test_demo_mock_shows_followup_actions(self):
+        """체크리스트 → 후속 액션 3가지(드릴다운/대화/PDF)로 변경."""
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
-        assert "체크리스트" in result.stdout
+        assert "후속 액션" in result.stdout or "드릴다운" in result.stdout
 
     def test_demo_mock_shows_ltv(self):
         result = subprocess.run(

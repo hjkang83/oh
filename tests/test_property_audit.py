@@ -322,14 +322,14 @@ class TestBuildProSummary:
 
     def test_persona_block_rendered(self):
         turns = [
-            {"agent_key": "financial", "name": "재무설계사", "label": "대출·자금 전문",
-             "emoji": "💰", "text": "호가 8.5억 vs P50 7.6억 [출처: 국토부]."},
-            {"agent_key": "analyst", "name": "시장분석가", "label": "가격·시장 분석",
-             "emoji": "📊", "text": "금리 시그널 부정적."},
+            {"agent_key": "finance_analyst", "name": "재무 분석가", "label": "대출 한도·월 상환액",
+             "emoji": "💳", "text": "호가 8.5억 vs P50 7.6억 [출처: 국토부]."},
+            {"agent_key": "market_analyst", "name": "시세 분석가", "label": "실거래·호가",
+             "emoji": "💰", "text": "금리 시그널 부정적."},
         ]
         out = build_pro_summary(self._request(), self._dist(), turns)
-        assert "재무설계사" in out
-        assert "시장분석가" in out
+        assert "재무 분석가" in out
+        assert "시세 분석가" in out
         assert "호가 8.5억" in out
         assert "금리 시그널" in out
 
@@ -376,29 +376,37 @@ class TestPersonaContextAndPrompt:
     def test_prompt_includes_data_block_and_source(self):
         req, dist = self._setup()
         ctx = build_persona_context(req, dist)
-        prompt = build_persona_prompt("financial", ctx)
+        prompt = build_persona_prompt("finance_analyst", ctx)
         assert "85,000만원" in prompt or "8억" in prompt
         assert "P50" in prompt
         assert "국토교통부" in prompt
 
     def test_prompt_role_guidance_per_agent(self):
+        """5인 검증 분석가 모두 자기 영역 가이드를 가지는지."""
         req, dist = self._setup()
         ctx = build_persona_context(req, dist)
-        financial = build_persona_prompt("financial", ctx)
-        analyst = build_persona_prompt("analyst", ctx)
-        broker = build_persona_prompt("broker", ctx)
-        assert "재무설계사" in financial
-        assert "헤도닉" in financial
-        assert "시장분석가" in analyst
-        assert "타이밍" in analyst
-        assert "부동산 중개사" in broker
-        assert "입지" in broker or "매물" in broker
+        market = build_persona_prompt("market_analyst", ctx)
+        location = build_persona_prompt("location_analyst", ctx)
+        risk = build_persona_prompt("risk_analyst", ctx)
+        finance = build_persona_prompt("finance_analyst", ctx)
+        future = build_persona_prompt("future_analyst", ctx)
+        assert "시세 분석가" in market
+        assert "P50" in market or "헤도닉" in market
+        assert "입지 분석가" in location
+        assert "통근" in location or "학군" in location or "인프라" in location
+        assert "리스크 분석가" in risk
+        assert "단지" in risk and "거시" in risk
+        assert "재무 분석가" in finance
+        assert "LTV" in finance or "DSR" in finance or "정책대출" in finance
+        assert "미래가치 분석가" in future
+        assert "호재" in future and "악재" in future
 
-    def test_prompt_enforces_boundary_for_financial(self):
+    def test_prompt_enforces_boundary_for_finance_analyst(self):
         req, dist = self._setup()
         ctx = build_persona_context(req, dist)
-        financial = build_persona_prompt("financial", ctx)
-        assert "추천" in financial or "타이밍" in financial  # 금지 영역 명시
+        finance = build_persona_prompt("finance_analyst", ctx)
+        # 재무 분석가는 입지·시세 영역 침범 금지를 명시
+        assert "입지" in finance or "시세" in finance
 
     def test_low_sample_warning_in_prompt(self):
         req, _ = self._setup()
@@ -408,7 +416,7 @@ class TestPersonaContextAndPrompt:
             label="고평가", has_low_sample_warning=True,
         )
         ctx = build_persona_context(req, warned_dist)
-        prompt = build_persona_prompt("financial", ctx)
+        prompt = build_persona_prompt("finance_analyst", ctx)
         assert "신뢰구간" in prompt or "주의" in prompt
 
 
@@ -433,10 +441,13 @@ class TestAuditPropertyEndToEnd:
 
     async def _run(self, request, summary, persona_responses=None):
         if persona_responses is None:
+            # 5인 검증 분석가 (Phase 1 피보팅)
             persona_responses = {
-                "broker": "중개사 응답: 같은 가격대 대안 검토 권장.",
-                "financial": "재무설계사 응답: 호가 +12% 고평가 [출처: 국토교통부 실거래가 API].",
-                "analyst": "시장분석가 응답: 금리 시그널 검토 필요.",
+                "market_analyst": "시세 분석가 응답: 호가 +12% 고평가 [출처: 국토교통부 실거래가 API].",
+                "location_analyst": "입지 분석가 응답: 통근·학군 양호.",
+                "risk_analyst": "리스크 분석가 응답: 단지 노후 + 거시 DSR 강화.",
+                "finance_analyst": "재무 분석가 응답: LTV 80%·디딤돌 자격 통과 [출처: 금융위원회].",
+                "future_analyst": "future 분석가 응답: 호재·악재 상충 — 보합.",
             }
 
         async def mock_caller(agent_key, ctx):
@@ -465,29 +476,31 @@ class TestAuditPropertyEndToEnd:
         assert result.distribution.label in result.pro_summary
 
     def test_personas_called_in_parallel_and_attached(self):
+        """5인 검증 분석가 병렬 호출 (Phase 1 피보팅)."""
         result = asyncio.run(
             self._run(self._request(85000), self._summary_with_12_trades())
         )
-        assert len(result.persona_turns) == 3
-        keys = [t["agent_key"] for t in result.persona_turns]
-        assert "broker" in keys
-        assert "financial" in keys
-        assert "analyst" in keys
+        assert len(result.persona_turns) == 5
+        keys = {t["agent_key"] for t in result.persona_turns}
+        assert keys == {
+            "market_analyst", "location_analyst", "risk_analyst",
+            "finance_analyst", "future_analyst",
+        }
 
     def test_persona_text_in_pro_summary(self):
         result = asyncio.run(
             self._run(self._request(85000), self._summary_with_12_trades())
         )
-        assert "재무설계사 응답" in result.pro_summary
-        assert "시장분석가 응답" in result.pro_summary
+        assert "재무 분석가 응답" in result.pro_summary
+        assert "시세 분석가 응답" in result.pro_summary
 
     def test_persona_text_not_in_simple_summary(self):
         """simple 모드는 페르소나 인용을 절대 노출하지 않음 (clerk.md 가드)."""
         result = asyncio.run(
             self._run(self._request(85000), self._summary_with_12_trades())
         )
-        assert "재무설계사 응답" not in result.simple_summary
-        assert "시장분석가 응답" not in result.simple_summary
+        assert "재무 분석가 응답" not in result.simple_summary
+        assert "시세 분석가 응답" not in result.simple_summary
 
     def test_insufficient_sample_skips_personas(self):
         result = asyncio.run(
@@ -499,7 +512,7 @@ class TestAuditPropertyEndToEnd:
 
     def test_persona_failure_handled_gracefully(self):
         async def failing_caller(agent_key, ctx):
-            if agent_key == "analyst":
+            if agent_key == "market_analyst":
                 raise RuntimeError("LLM down")
             return f"{agent_key} 응답 정상"
 
@@ -511,12 +524,12 @@ class TestAuditPropertyEndToEnd:
             )
 
         result = asyncio.run(go())
-        assert len(result.persona_turns) == 3
-        analyst_turn = next(t for t in result.persona_turns if t["agent_key"] == "analyst")
-        assert "실패" in analyst_turn["text"]
-        # 다른 페르소나는 정상 처리
-        financial_turn = next(t for t in result.persona_turns if t["agent_key"] == "financial")
-        assert "정상" in financial_turn["text"]
+        assert len(result.persona_turns) == 5
+        market_turn = next(t for t in result.persona_turns if t["agent_key"] == "market_analyst")
+        assert "실패" in market_turn["text"]
+        # 다른 분석가는 정상 처리
+        finance_turn = next(t for t in result.persona_turns if t["agent_key"] == "finance_analyst")
+        assert "정상" in finance_turn["text"]
 
     def test_simple_summary_always_jargon_free(self):
         """end-to-end 결과의 simple_summary가 통계 용어 가드를 통과하는지."""

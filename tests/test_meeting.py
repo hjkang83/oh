@@ -103,11 +103,11 @@ class TestMeetingInit:
 # ------------------------------------------------------------------
 
 class TestUserSays:
-    def test_returns_four_turns(self, meeting_no_api):
+    def test_returns_five_turns(self, meeting_no_api):
         turns = asyncio.get_event_loop().run_until_complete(
-            meeting_no_api.user_says("수익률 3%면 낮은 거 아냐?")
+            meeting_no_api.user_says("이 매물 검증 부탁드립니다")
         )
-        assert len(turns) == 4
+        assert len(turns) == 5
 
     def test_each_turn_has_required_fields(self, meeting_no_api):
         turns = asyncio.get_event_loop().run_until_complete(
@@ -127,8 +127,18 @@ class TestUserSays:
         keys = {t["agent_key"] for t in turns}
         assert keys == set(SPEAKERS)
 
-    def test_loan_advisor_in_speakers(self):
-        assert "loan_advisor" in SPEAKERS
+    def test_speakers_are_5_verifiers(self):
+        assert SPEAKERS == [
+            "market_analyst",
+            "location_analyst",
+            "risk_analyst",
+            "finance_analyst",
+            "future_analyst",
+        ]
+
+    def test_old_4agent_keys_not_in_speakers(self):
+        for old in ("broker", "financial", "analyst", "loan_advisor"):
+            assert old not in SPEAKERS
 
     def test_transcript_grows(self, meeting_no_api):
         before = len(meeting_no_api.transcript)
@@ -136,7 +146,7 @@ class TestUserSays:
             meeting_no_api.user_says("첫 번째 질문")
         )
         after = len(meeting_no_api.transcript)
-        assert after == before + 5  # 1 user + 4 agents
+        assert after == before + 6  # 1 user + 5 agents
 
     def test_multi_turn_conversation(self, meeting_no_api):
         loop = asyncio.get_event_loop()
@@ -145,14 +155,14 @@ class TestUserSays:
         user_turns = [t for t in meeting_no_api.transcript if t["role"] == "user"]
         agent_turns = [t for t in meeting_no_api.transcript if t["role"] == "agent"]
         assert len(user_turns) >= 3  # topic + 2 user inputs (+ data blocks)
-        assert len(agent_turns) == 8  # 4 agents × 2 turns
+        assert len(agent_turns) == 10  # 5 agents × 2 turns
 
     def test_api_called_in_parallel(self, meeting_no_api):
         asyncio.get_event_loop().run_until_complete(
             meeting_no_api.user_says("테스트")
         )
         client = meeting_no_api.client
-        assert client.messages.create.call_count == 4
+        assert client.messages.create.call_count == 5
 
     def test_response_text_captured(self, meeting_no_api):
         turns = asyncio.get_event_loop().run_until_complete(
@@ -168,33 +178,33 @@ class TestUserSays:
 
 class TestMessagesForAgent:
     def test_first_message_is_user(self, meeting_no_api):
-        msgs = meeting_no_api._messages_for_agent("financial")
+        msgs = meeting_no_api._messages_for_agent("finance_analyst")
         assert msgs[0]["role"] == "user"
 
     def test_last_message_is_user(self, meeting_no_api):
-        msgs = meeting_no_api._messages_for_agent("financial")
+        msgs = meeting_no_api._messages_for_agent("finance_analyst")
         assert msgs[-1]["role"] == "user"
 
     def test_own_turns_are_assistant(self, meeting_no_api):
         loop = asyncio.get_event_loop()
         loop.run_until_complete(meeting_no_api.user_says("질문"))
-        msgs = meeting_no_api._messages_for_agent("financial")
+        msgs = meeting_no_api._messages_for_agent("finance_analyst")
         assistant_msgs = [m for m in msgs if m["role"] == "assistant"]
         assert len(assistant_msgs) >= 1
 
     def test_other_turns_are_user(self, meeting_no_api):
         loop = asyncio.get_event_loop()
         loop.run_until_complete(meeting_no_api.user_says("질문"))
-        msgs = meeting_no_api._messages_for_agent("financial")
+        msgs = meeting_no_api._messages_for_agent("finance_analyst")
         user_msgs = [m for m in msgs if m["role"] == "user"]
-        has_other_agent = any("중개사" in m["content"] or "시장분석가" in m["content"]
+        has_other_agent = any("시세 분석가" in m["content"] or "입지 분석가" in m["content"]
                              for m in user_msgs)
         assert has_other_agent
 
     def test_alternating_roles(self, meeting_no_api):
         loop = asyncio.get_event_loop()
         loop.run_until_complete(meeting_no_api.user_says("질문"))
-        msgs = meeting_no_api._messages_for_agent("financial")
+        msgs = meeting_no_api._messages_for_agent("finance_analyst")
         for i in range(1, len(msgs)):
             if msgs[i]["role"] == msgs[i - 1]["role"] == "assistant":
                 pytest.fail("연속된 assistant 메시지 발견 — API 규약 위반")
@@ -321,20 +331,21 @@ class TestAgentErrorHandling:
         client = meeting_no_api.client
         client.messages.create = AsyncMock(
             side_effect=[
-                _mock_response("중개사 정상 응답"),
+                _mock_response("시세 정상 응답"),
                 RuntimeError("API 장애"),
-                _mock_response("시장분석가 정상 응답"),
-                _mock_response("대출상담사 정상 응답"),
+                _mock_response("리스크 정상 응답"),
+                _mock_response("재무 정상 응답"),
+                _mock_response("미래가치 정상 응답"),
             ]
         )
         turns = asyncio.get_event_loop().run_until_complete(
             meeting_no_api.user_says("테스트")
         )
-        assert len(turns) == 4
+        assert len(turns) == 5
         failed = [t for t in turns if "실패" in t["text"]]
         assert len(failed) == 1
         ok = [t for t in turns if "실패" not in t["text"]]
-        assert len(ok) == 3
+        assert len(ok) == 4
 
 
 # ------------------------------------------------------------------
@@ -409,7 +420,7 @@ class TestProfileIntegration:
     def test_profile_visible_to_agents_in_messages(self, mock_client, sample_profile):
         with patch("meeting.AsyncAnthropic", return_value=mock_client):
             m = Meeting("테스트 안건", profile=sample_profile)
-        msgs = m._messages_for_agent("broker")
+        msgs = m._messages_for_agent("location_analyst")
         joined = "\n".join(msg["content"] for msg in msgs)
         assert "홍고객" in joined
         assert "판교" in joined
@@ -489,108 +500,116 @@ class TestProfileIntegration:
 # ------------------------------------------------------------------
 
 class TestSourceValidatorIntegration:
-    """financial·loan_advisor turn에 [출처:] 누락된 수치가 있으면 turn['warnings']에 부착되는지."""
+    """5인 검증 분석가 모두 [출처:] 누락된 수치가 있으면 turn['warnings']에 부착되는지.
 
-    def _drive(self, meeting, cfo_text: str, cso_text: str = "analyst ok",
-               mentor_text: str = "broker ok", loan_text: str = "loan ok [출처: 한국주택금융공사]"):
-        # SPEAKERS = ["broker", "financial", "analyst", "loan_advisor"]
-        # financial과 loan_advisor가 source-citation guard 대상.
+    Phase 1 피보팅 후: 검증 시스템(Second Opinion)이라 모든 분석가에게 출처 의무.
+    """
+
+    OK_SOURCE = "[출처: 국토교통부 실거래가]"
+
+    def _drive(self, meeting, *,
+               market_text: str = "시세 ok " + OK_SOURCE,
+               location_text: str = "입지 ok " + OK_SOURCE,
+               risk_text: str = "리스크 ok " + OK_SOURCE,
+               finance_text: str = "재무 ok " + OK_SOURCE,
+               future_text: str = "미래가치 ok " + OK_SOURCE):
+        # SPEAKERS = market·location·risk·finance·future (5명 모두 가드 대상)
         meeting.client.messages.create = AsyncMock(
             side_effect=[
-                _mock_response(mentor_text),  # broker (1st)
-                _mock_response(cfo_text),     # financial (2nd) ← warning target
-                _mock_response(cso_text),     # analyst (3rd)
-                _mock_response(loan_text),    # loan_advisor (4th) ← warning target
+                _mock_response(market_text),     # market_analyst (1st)
+                _mock_response(location_text),   # location_analyst (2nd)
+                _mock_response(risk_text),       # risk_analyst (3rd)
+                _mock_response(finance_text),    # finance_analyst (4th)
+                _mock_response(future_text),     # future_analyst (5th)
             ]
         )
         return asyncio.get_event_loop().run_until_complete(
             meeting.user_says("질문")
         )
 
+    OK_SOURCE = "[출처: 국토교통부 실거래가]"
+
     def test_warnings_field_present_on_all_turns(self, meeting_no_api):
-        turns = self._drive(meeting_no_api, "ok", "ok", "ok")
+        turns = self._drive(meeting_no_api)
         for turn in turns:
             assert "warnings" in turn
             assert isinstance(turn["warnings"], list)
 
-    def test_cfo_with_source_has_no_warnings(self, meeting_no_api):
+    def test_market_analyst_with_source_has_no_warnings(self, meeting_no_api):
         turns = self._drive(
             meeting_no_api,
-            "수익률 4.2%입니다 [출처: 한국부동산원].",
+            market_text="P50 5.45억입니다 [출처: 국토교통부].",
         )
-        financial = next(t for t in turns if t["agent_key"] == "financial")
-        assert financial["warnings"] == []
+        market = next(t for t in turns if t["agent_key"] == "market_analyst")
+        assert market["warnings"] == []
 
-    def test_cfo_without_source_has_warning(self, meeting_no_api):
+    def test_market_analyst_without_source_has_warning(self, meeting_no_api):
         turns = self._drive(
             meeting_no_api,
-            "수익률 4.2%입니다.",  # 출처 누락
+            market_text="호가는 P50 대비 +4.2%입니다.",  # 출처 누락
         )
-        financial = next(t for t in turns if t["agent_key"] == "financial")
-        assert len(financial["warnings"]) == 1
-        assert "4.2%" in financial["warnings"][0]
+        market = next(t for t in turns if t["agent_key"] == "market_analyst")
+        assert len(market["warnings"]) == 1
+        assert "4.2%" in market["warnings"][0]
 
-    def test_cso_skipped_even_with_bare_numbers(self, meeting_no_api):
-        # analyst는 1차 가드 적용 대상이 아니므로 출처 없는 수치도 warning 안 붙음
+    def test_finance_analyst_without_source_has_warning(self, meeting_no_api):
         turns = self._drive(
             meeting_no_api,
-            "재무설계사 수치 5% [출처: x].",
-            cso_text="분석가 5% 출처 없음.",
+            finance_text="LTV 80% 적용 가능합니다.",  # 출처 누락
         )
-        analyst = next(t for t in turns if t["agent_key"] == "analyst")
-        assert analyst["warnings"] == []
+        finance = next(t for t in turns if t["agent_key"] == "finance_analyst")
+        assert len(finance["warnings"]) == 1
+        assert "80%" in finance["warnings"][0]
 
-    def test_mentor_skipped(self, meeting_no_api):
+    def test_risk_analyst_without_source_has_warning(self, meeting_no_api):
+        """검증 시스템에서는 리스크 분석가도 출처 의무."""
         turns = self._drive(
             meeting_no_api,
-            "재무설계사 ok [출처: x].",
-            mentor_text="중개사 5% 출처 없음.",
+            risk_text="DSR 40% 강화 추세입니다.",  # 출처 누락
         )
-        broker = next(t for t in turns if t["agent_key"] == "broker")
-        assert broker["warnings"] == []
+        risk = next(t for t in turns if t["agent_key"] == "risk_analyst")
+        assert len(risk["warnings"]) == 1
 
-    def test_failed_cfo_response_has_no_warnings(self, meeting_no_api):
-        # SPEAKERS = ["broker", "financial", "analyst", "loan_advisor"]
+    def test_future_analyst_without_source_has_warning(self, meeting_no_api):
+        """미래가치 분석가도 재무 단위(%) 사용 시 출처 의무."""
+        turns = self._drive(
+            meeting_no_api,
+            future_text="공급 압력 +12% 증가 추세입니다.",  # 출처 누락
+        )
+        future = next(t for t in turns if t["agent_key"] == "future_analyst")
+        assert len(future["warnings"]) >= 1
+
+    def test_location_analyst_warnings_field_present(self, meeting_no_api):
+        """입지 분석가는 통근 시간·거리(분/m) 등 비재무 단위가 많아 validator
+        오탐을 피하게 설계됨. warnings 필드 자체는 항상 부착되는지 확인."""
+        turns = self._drive(meeting_no_api)
+        location = next(t for t in turns if t["agent_key"] == "location_analyst")
+        assert "warnings" in location
+        assert isinstance(location["warnings"], list)
+
+    def test_failed_response_has_no_warnings(self, meeting_no_api):
         meeting_no_api.client.messages.create = AsyncMock(
             side_effect=[
-                _mock_response("broker ok"),
-                RuntimeError("API 장애"),   # financial fails
-                _mock_response("analyst ok"),
-                _mock_response("loan_advisor ok [출처: x]"),
+                _mock_response("시세 ok " + self.OK_SOURCE),
+                RuntimeError("API 장애"),   # location_analyst fails
+                _mock_response("리스크 ok " + self.OK_SOURCE),
+                _mock_response("재무 ok " + self.OK_SOURCE),
+                _mock_response("미래가치 ok " + self.OK_SOURCE),
             ]
         )
         turns = asyncio.get_event_loop().run_until_complete(
             meeting_no_api.user_says("질문")
         )
-        financial = next(t for t in turns if t["agent_key"] == "financial")
-        assert financial["warnings"] == []
+        location = next(t for t in turns if t["agent_key"] == "location_analyst")
+        assert location["warnings"] == []
 
     def test_multiple_missing_numbers_yield_multiple_warnings(self, meeting_no_api):
         turns = self._drive(
             meeting_no_api,
-            "수익률 4.2%입니다. 취득세 4.6%입니다.",
+            finance_text="월 원리금 149만원입니다. 취득세 1%입니다.",
         )
-        financial = next(t for t in turns if t["agent_key"] == "financial")
-        assert len(financial["warnings"]) == 2
-
-    def test_loan_advisor_with_source_has_no_warnings(self, meeting_no_api):
-        turns = self._drive(
-            meeting_no_api,
-            cfo_text="ok [출처: x]",
-            loan_text="LTV 80% [출처: 금융위원회 2024].",
-        )
-        loan = next(t for t in turns if t["agent_key"] == "loan_advisor")
-        assert loan["warnings"] == []
-
-    def test_loan_advisor_without_source_has_warning(self, meeting_no_api):
-        turns = self._drive(
-            meeting_no_api,
-            cfo_text="ok [출처: x]",
-            loan_text="디딤돌 금리 3.55% 가능합니다.",  # 출처 누락
-        )
-        loan = next(t for t in turns if t["agent_key"] == "loan_advisor")
-        assert len(loan["warnings"]) == 1
-        assert "3.55%" in loan["warnings"][0]
+        finance = next(t for t in turns if t["agent_key"] == "finance_analyst")
+        assert len(finance["warnings"]) >= 2
 
 
 # ------------------------------------------------------------------

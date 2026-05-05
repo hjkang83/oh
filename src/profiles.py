@@ -1,7 +1,7 @@
 """Buyer profile: persist first-time home buyer's purchase conditions.
 
-MC 인터뷰 결과를 구조화하여 저장하고, 중개사·재무설계사·시장분석가에게
-컨텍스트 블록으로 주입한다.
+MC 인터뷰 결과를 구조화하여 저장하고, 5인 검증 분석가
+(시세·입지·리스크·재무·미래가치)에게 컨텍스트 블록으로 주입한다.
 
 Storage: profiles/{name}.json
 """
@@ -38,7 +38,7 @@ class BuyerProfile:
     budget_manwon: int = 0                # 총 구매 예산 (만원, 대출 포함). 0=미입력
     own_funds_manwon: int = 0             # 자기자본 (만원). 0=미입력
     monthly_payment_manwon: int = 0       # 월 원리금 감당 가능액 (만원). 0=미입력
-    annual_income_manwon: int = 0         # 부부합산 연소득 (만원). 0=미입력 — 대출상담사 자격 판정 핵심
+    annual_income_manwon: int = 0         # 부부합산 연소득 (만원). 0=미입력 — 재무 분석가 정책대출 자격 판정 핵심
     existing_debt_manwon: int = 0         # 기존 월 원리금 부담 (만원). 0=없음 — DSR 산정용
     is_first_buyer: bool = True           # 생애최초 주택 구매자 여부 — LTV 우대 적용
     subscription_years: int = 0           # 청약저축 가입년수 — 참고용
@@ -198,10 +198,12 @@ def format_for_agents(profile: BuyerProfile | None) -> str:
         lines.append(f"- 메모: {profile.notes.strip()}")
     lines.append("")
     lines.append(
-        "중개사는 출근지·예산·가족 구성을 기반으로 입지를 추천하세요. "
-        "재무설계사는 예산·자기자본·월 감당액을 계산 인풋으로 활용하세요. "
-        "시장분석가는 선호 지역을 분석 대상으로 삼으세요. "
-        "대출상담사는 부부합산 연소득·기존 부채·생애최초 여부를 정책대출 자격 판정에 활용하세요."
+        "시세 분석가는 선호 지역의 P50·호가 적정성을 검증하세요. "
+        "입지 분석가는 출근지 통근·학군·인프라를 검증하세요. "
+        "리스크 분석가는 단지·거시 리스크를 식별하세요. "
+        "재무 분석가는 예산·자기자본·월 감당액·연소득·기존 부채·생애최초 여부를 활용하여 "
+        "LTV/DSR·정책대출(디딤돌·보금자리)·총취득비용을 검증하세요. "
+        "미래가치 분석가는 선호 지역의 호재·악재 5~10년 시나리오를 검증하세요."
     )
     lines.append("=== 프로필 끝 ===")
     return "\n".join(lines)

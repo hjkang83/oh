@@ -224,21 +224,23 @@ class TestDemoMockPhase4:
         assert result.returncode == 0
         assert "취득세" in result.stdout
 
-    def test_demo_shows_consultation_record(self):
+    def test_demo_shows_summary_report(self):
+        """Phase 1 피보팅 후 상담록 → 종합 리포트로 변경."""
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
-        assert "상담록" in result.stdout
+        assert "리포트" in result.stdout or "종합 평점" in result.stdout
 
-    def test_demo_shows_next_action(self):
+    def test_demo_shows_followup_actions(self):
+        """Next Action → 후속 액션(드릴다운/대화/PDF)으로 변경."""
         result = subprocess.run(
             [sys.executable, "src/demo_mock.py"],
             capture_output=True, text=True, timeout=30,
             cwd=str(Path(__file__).resolve().parent.parent),
         )
-        assert "Next Action" in result.stdout
+        assert "후속 액션" in result.stdout or "드릴다운" in result.stdout
 
 
 # ── CLI flags ──

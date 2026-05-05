@@ -1,10 +1,13 @@
-"""Streamlit 채팅 UI — 생애 첫 주택 구매 자문 시스템 (3단계 플로우).
+"""Streamlit UI — 부동산 검증 AI 에이전트 (Second Opinion).
 
-Stage 1: MC 인터뷰 — 자연스러운 대화로 구매 조건 수집 → BuyerProfile
-Stage 2: 에이전트 자문 — 중개사·재무설계사·시장분석가 3인 병렬 응답
-          (국토부 실거래 데이터 자동 주입 — Phase 4A)
-Stage 3: 호가 적정성 — molit_api P50 기반 적정가 평가 (출처 명시)
-Tab 4:   상담록 — 비서실장 자동 생성 + 저장 (Phase 4B)
+Phase 1 피보팅 후 — 5인 검증 분석가 골격으로 일괄 키 교체 완료.
+- Stage 1: MC 인터뷰 → BuyerProfile 수집 (Phase 2에서 5~6개 짧은 질문으로 단축 예정)
+- Stage 2: 5인 분석가 병렬 검증 (시세·입지·리스크·재무·미래가치)
+- Stage 3: 호가 적정성 (molit_api P50, Phase 3에서 매물 주소 입력 단계로 흡수 예정)
+- Tab 4: 종합 리포트 (서기) — Phase 4에서 별점·합의 결론 위젯 추가 예정
+
+컨셉 단일 진실원: docs/SCENARIO_v1.md
+피보팅 플랜: docs/PLAN_pivot_to_verifier.md
 
 Usage:
     streamlit run src/app.py
@@ -59,15 +62,23 @@ st.set_page_config(
 )
 
 AGENT_COLORS = {
-    "broker": "#1565C0",
-    "financial": "#2E7D32",
-    "analyst": "#C62828",
-    "loan_advisor": "#6D4C41",
+    # 5인 검증 분석가 (Phase 1 피보팅)
+    "market_analyst": "#1565C0",     # 💰 시세 — 파랑
+    "location_analyst": "#2E7D32",   # 🏢 입지 — 녹색
+    "risk_analyst": "#C62828",       # ⚠️ 리스크 — 빨강
+    "finance_analyst": "#6D4C41",    # 💳 재무 — 갈색
+    "future_analyst": "#5E35B1",     # 🎯 미래가치 — 보라
     "clerk": "#E65100",
     "mc": "#6A1B9A",
 }
 
-ADVISORY_AGENT_KEYS: tuple[str, ...] = ("broker", "financial", "analyst", "loan_advisor")
+ADVISORY_AGENT_KEYS: tuple[str, ...] = (
+    "market_analyst",
+    "location_analyst",
+    "risk_analyst",
+    "finance_analyst",
+    "future_analyst",
+)
 
 LAYOUT_KEY = "layout_mode"  # "wide" (4단 가로) | "stacked" (세로 스택)
 
@@ -256,7 +267,7 @@ with st.sidebar:
             )
             f_income = st.number_input(
                 "부부합산 연소득 (만원)", 0, 50_000, base.annual_income_manwon, 100,
-                help="대출상담사 정책대출 자격 판정에 활용 (디딤돌·보금자리 소득 한도 비교)",
+                help="재무 분석가 정책대출 자격 판정에 활용 (디딤돌·보금자리 소득 한도 비교)",
             )
             f_debt = st.number_input(
                 "기존 월 원리금 부담 (만원)", 0, 1000, base.existing_debt_manwon, 10,

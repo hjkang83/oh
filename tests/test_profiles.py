@@ -179,19 +179,25 @@ class TestFormatForAgents:
         text = format_for_agents(p)
         assert "메모:" not in text
 
-    def test_block_targets_broker_financial_analyst(self):
+    def test_block_targets_5_verifiers(self):
         p = BuyerProfile()
         text = format_for_agents(p)
-        assert "중개사" in text
-        assert "재무설계사" in text
-        assert "시장분석가" in text
+        # Phase 1 피보팅 후 5인 분석가
+        assert "시세 분석가" in text
+        assert "입지 분석가" in text
+        assert "리스크 분석가" in text
+        assert "재무 분석가" in text
+        assert "미래가치 분석가" in text
 
-    def test_block_targets_loan_advisor(self):
+    def test_block_targets_finance_analyst_for_policy_loan(self):
         p = BuyerProfile()
         text = format_for_agents(p)
-        assert "대출상담사" in text
+        # 재무 분석가가 정책대출 매칭 담당 (옛 loan_advisor 통합)
+        assert "재무 분석가" in text
+        assert "정책대출" in text or "디딤돌" in text or "보금자리" in text
 
-    def test_block_includes_loan_advisor_fields(self):
+    def test_block_includes_finance_analyst_fields(self):
+        """재무 분석가가 활용하는 4개 필드 (옛 loan_advisor + financial 통합)."""
         p = BuyerProfile(
             annual_income_manwon=5500,
             existing_debt_manwon=50,
