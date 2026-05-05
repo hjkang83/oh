@@ -151,7 +151,7 @@ class TestLoadProfileOrWarn:
         from profiles import BuyerProfile, save_profile
         from main import _load_profile_or_warn
         save_profile(
-            BuyerProfile(nickname="홍대표", commute_location="강남역"),
+            BuyerProfile(nickname="홍대표", office_address="강남역"),
             "alice",
             profiles_dir=isolated_profiles_dir,
         )
@@ -183,88 +183,75 @@ class TestPrintProfileList:
 
 
 class TestInitProfileWizard:
+    """SCENARIO_v1 5필드 (Phase 2 피보팅 후) — 7 inputs."""
+
+    # 7 inputs: nickname, assets, loan_capacity, office_address, commute_mode, priorities, notes
+
     def test_creates_profile_with_defaults(self, isolated_profiles_dir, capsys):
-        """Pressing Enter on every prompt accepts defaults."""
         from main import _run_init_profile
-        # 11 inputs: nickname, commute, budget, own_funds, monthly, family,
-        #            preferred_area, preferred_size, preferred_type, move_in, notes
-        with patch("builtins.input", side_effect=[""] * 11):
+        with patch("builtins.input", side_effect=[""] * 7):
             _run_init_profile("default")
         out = capsys.readouterr().out
         assert "프로필 저장" in out
         assert (isolated_profiles_dir / "default.json").exists()
 
     def test_edits_existing_profile(self, isolated_profiles_dir, capsys):
-        """Existing profile's values become defaults."""
         from profiles import BuyerProfile, save_profile, load_profile
         from main import _run_init_profile
         save_profile(
-            BuyerProfile(nickname="기존", budget_manwon=10000),
+            BuyerProfile(nickname="기존", assets_manwon=10000),
             "edit_me",
             profiles_dir=isolated_profiles_dir,
         )
-        with patch("builtins.input", side_effect=[""] * 11):
+        with patch("builtins.input", side_effect=[""] * 7):
             _run_init_profile("edit_me")
         out = capsys.readouterr().out
         assert "편집 모드" in out
         loaded = load_profile("edit_me", profiles_dir=isolated_profiles_dir)
         assert loaded.nickname == "기존"
-        assert loaded.budget_manwon == 10000
+        assert loaded.assets_manwon == 10000
 
     def test_collects_custom_values(self, isolated_profiles_dir):
-        """Verify non-default user input is captured."""
         from profiles import load_profile
         from main import _run_init_profile
         with patch("builtins.input", side_effect=[
-            "홍길동",     # nickname
-            "판교",       # commute_location
-            "60000",      # budget_manwon
-            "20000",      # own_funds_manwon
-            "180",        # monthly_payment_manwon
-            "2",          # family_size
-            "마포구",     # preferred_area
-            "84",         # preferred_size_sqm
-            "apartment",  # preferred_type (valid choice)
-            "6",          # move_in_months
-            "강남 우선",  # notes
+            "홍길동",                    # nickname
+            "20000",                     # assets_manwon
+            "33000",                     # loan_capacity_manwon
+            "광화문 OO빌딩",             # office_address
+            "subway",                    # commute_mode (valid choice)
+            "자산 가치, 출퇴근 편의성",  # priorities
+            "광명 OO아파트 우선",        # notes
         ]):
             _run_init_profile("holguildong")
         loaded = load_profile("holguildong", profiles_dir=isolated_profiles_dir)
         assert loaded.nickname == "홍길동"
-        assert loaded.commute_location == "판교"
-        assert loaded.budget_manwon == 60000
-        assert loaded.own_funds_manwon == 20000
-        assert loaded.monthly_payment_manwon == 180
-        assert loaded.family_size == 2
-        assert loaded.preferred_area == "마포구"
-        assert loaded.preferred_size_sqm == 84.0
-        assert loaded.preferred_type == "apartment"
-        assert loaded.move_in_months == 6
-        assert loaded.notes == "강남 우선"
+        assert loaded.assets_manwon == 20000
+        assert loaded.loan_capacity_manwon == 33000
+        assert loaded.office_address == "광화문 OO빌딩"
+        assert loaded.commute_mode == "subway"
+        assert loaded.priorities == ["자산 가치", "출퇴근 편의성"]
+        assert loaded.notes == "광명 OO아파트 우선"
 
     def test_rejects_invalid_choice_and_retries(self, isolated_profiles_dir, capsys):
-        """Invalid preferred_type value triggers a re-prompt."""
+        """Invalid commute_mode value triggers a re-prompt."""
         from profiles import load_profile
         from main import _run_init_profile
         with patch("builtins.input", side_effect=[
-            "",           # nickname (default)
-            "",           # commute_location (default)
-            "",           # budget_manwon (default)
-            "",           # own_funds_manwon (default)
-            "",           # monthly_payment_manwon (default)
-            "",           # family_size (default)
-            "",           # preferred_area (default)
-            "",           # preferred_size_sqm (default)
-            "invalid",    # preferred_type (rejected)
-            "villa",      # preferred_type (valid)
-            "",           # move_in_months (default)
-            "",           # notes (default)
+            "",          # nickname (default)
+            "",          # assets (default)
+            "",          # loan (default)
+            "",          # office (default)
+            "invalid",   # commute_mode (rejected)
+            "bus",       # commute_mode (valid)
+            "",          # priorities (default)
+            "",          # notes (default)
         ]):
             _run_init_profile("retry_test")
         out = capsys.readouterr().out
         assert "유효하지 않습니다" in out
         loaded = load_profile("retry_test", profiles_dir=isolated_profiles_dir)
-        assert loaded.preferred_type == "villa"
+        assert loaded.commute_mode == "bus"
 
 
 class TestProfileArgs:

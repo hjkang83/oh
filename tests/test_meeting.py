@@ -384,10 +384,12 @@ class TestProfileIntegration:
     def sample_profile(self) -> BuyerProfile:
         return BuyerProfile(
             nickname="홍고객",
-            commute_location="판교",
-            budget_manwon=60000,
-            own_funds_manwon=20000,
-            notes="마포구 역세권 선호",
+            assets_manwon=20000,
+            loan_capacity_manwon=33000,
+            office_address="판교 OO빌딩",
+            commute_mode="subway",
+            priorities=["자산 가치", "출퇴근 편의성"],
+            notes="광명시 OO아파트 검증 예정",
         )
 
     def test_profile_stored_on_meeting(self, mock_client, sample_profile):
@@ -406,7 +408,7 @@ class TestProfileIntegration:
         texts = [t["text"] for t in m.transcript]
         assert any("홍고객" in t for t in texts)
         assert any("판교" in t for t in texts)
-        assert any("마포구 역세권 선호" in t for t in texts)
+        assert any("광명시 OO아파트 검증 예정" in t for t in texts)
 
     def test_profile_block_appears_before_topic(self, mock_client, sample_profile):
         with patch("meeting.AsyncAnthropic", return_value=mock_client):
@@ -414,7 +416,7 @@ class TestProfileIntegration:
         # First transcript entry should be profile, last should be the topic kickoff
         first_text = m.transcript[0]["text"]
         last_text = m.transcript[-1]["text"]
-        assert "프로필" in first_text
+        assert "검증 입력" in first_text or "프로필" in first_text
         assert "회의 시작" in last_text
 
     def test_profile_visible_to_agents_in_messages(self, mock_client, sample_profile):
@@ -451,7 +453,7 @@ class TestProfileIntegration:
             data = json.loads(Path(path).read_text(encoding="utf-8"))
             assert data["profile"] is not None
             assert data["profile"]["nickname"] == "홍고객"
-            assert data["profile"]["commute_location"] == "판교"
+            assert data["profile"]["office_address"] == "판교 OO빌딩"
         finally:
             from archive import delete_session
             delete_session(m.session_id)
@@ -466,7 +468,7 @@ class TestProfileIntegration:
             assert restored is not None
             assert restored.profile is not None
             assert restored.profile.nickname == "홍고객"
-            assert restored.profile.commute_location == "판교"
+            assert restored.profile.office_address == "판교 OO빌딩"
             assert restored.profile_data == m.profile_data
         finally:
             from archive import delete_session

@@ -33,7 +33,7 @@ except ImportError:
 from meeting import Meeting
 from personas import AGENT_CONFIG
 from profiles import (
-    PROPERTY_TYPES, SCHOOL_PRIORITY,
+    COMMUTE_MODES,
     BuyerProfile, list_profiles, load_profile, save_profile,
     format_for_agents as format_profile_for_agents,
 )
@@ -162,8 +162,12 @@ def _run_async(coro):
 
 
 def _regions_from_profile(profile: BuyerProfile) -> list[str]:
-    """BuyerProfile의 선호 지역을 REGION_CODES 기준으로 정규화."""
-    raw = profile.preferred_area or ""
+    """회사 주소에서 가까운 후보 지역 추출 (Phase 3 매물 주소 입력 단계 도입 전 임시).
+
+    SCENARIO_v1: Scene 03에서 매물 주소가 직접 입력되면 그 권역을 우선.
+    Phase 2 단계에서는 office_address에 포함된 구 이름을 fallback으로 사용.
+    """
+    raw = profile.office_address or ""
     candidates = [r.strip() for r in raw.replace(",", "，").replace("，", " ").split() if r.strip()]
     valid = [r for r in candidates if r in REGION_CODES]
     if not valid:
@@ -249,63 +253,47 @@ with st.sidebar:
         else:
             st.caption("저장된 프로필이 없습니다.")
 
-    # ── 프로필 직접 편집 ──
+    # ── 프로필 직접 편집 (SCENARIO_v1 5필드) ──
     with st.expander("✏️ 프로필 직접 편집", expanded=False):
         with st.form("profile_form"):
             base = st.session_state.get("buyer_profile") or BuyerProfile()
             edit_name = st.text_input("저장 이름", value="default")
             f_nickname = st.text_input("닉네임", value=base.nickname)
-            f_commute = st.text_input("출근지", value=base.commute_location)
-            f_budget = st.number_input(
-                "총 예산 (만원)", 0, 200_000, base.budget_manwon, 1000,
+            f_assets = st.number_input(
+                "보유 자산 (만원)", 0, 200_000, base.assets_manwon, 1000,
+                help="대략적 범위 OK. 5인 분석가 검증 입력으로 사용.",
             )
-            f_own = st.number_input(
-                "자기자본 (만원)", 0, 100_000, base.own_funds_manwon, 1000,
+            f_loan = st.number_input(
+                "대출 한도 — 총액 (만원)", 0, 200_000, base.loan_capacity_manwon, 1000,
+                help="총액으로 입력. 월 상환액 X.",
             )
-            f_monthly = st.number_input(
-                "월 원리금 한도 (만원)", 0, 1000, base.monthly_payment_manwon, 10,
+            f_office = st.text_input(
+                "회사 위치", value=base.office_address,
+                help="입지 분석가 통근 시간 산출에 활용 (예: 광화문 OO빌딩).",
             )
-            f_income = st.number_input(
-                "부부합산 연소득 (만원)", 0, 50_000, base.annual_income_manwon, 100,
-                help="재무 분석가 정책대출 자격 판정에 활용 (디딤돌·보금자리 소득 한도 비교)",
+            mode_keys = list(COMMUTE_MODES.keys())
+            f_mode = st.selectbox(
+                "출퇴근 수단",
+                mode_keys,
+                index=mode_keys.index(base.commute_mode) if base.commute_mode in COMMUTE_MODES else 0,
+                format_func=lambda k: COMMUTE_MODES[k],
             )
-            f_debt = st.number_input(
-                "기존 월 원리금 부담 (만원)", 0, 1000, base.existing_debt_manwon, 10,
-                help="DSR 산정용. 신규 대출 한도에 영향. 없으면 0.",
+            f_priorities_raw = st.text_input(
+                "우선순위 (1~2개, 콤마 구분)",
+                value=", ".join(base.priorities),
+                help="예: 자산 가치, 출퇴근 편의성",
             )
-            f_first = st.checkbox(
-                "생애최초 주택 구매자 (무주택)", value=base.is_first_buyer,
-                help="LTV 우대(80%까지) + 디딤돌·보금자리 우대 한도 적용",
-            )
-            f_subscription = st.number_input(
-                "청약저축 가입년수", 0, 50, base.subscription_years, 1,
-            )
-            f_family = st.number_input("가족 수", 1, 10, max(1, base.family_size), 1)
-            f_area = st.text_input("선호 지역", value=base.preferred_area)
-            f_size = st.number_input(
-                "선호 면적 (㎡)", 0.0, 300.0, float(base.preferred_size_sqm), 1.0,
-            )
-            f_type = st.selectbox(
-                "매물 유형",
-                list(PROPERTY_TYPES.keys()),
-                index=list(PROPERTY_TYPES.keys()).index(base.preferred_type)
-                if base.preferred_type in PROPERTY_TYPES else 0,
-                format_func=lambda k: PROPERTY_TYPES[k],
-            )
-            f_months = st.number_input("입주 시기 (개월 후)", 1, 60, base.move_in_months, 1)
-            f_notes = st.text_area("메모", value=base.notes, height=60)
+            f_notes = st.text_area("메모 (선택)", value=base.notes, height=60)
             if st.form_submit_button("💾 저장 + Stage 2 시작"):
+                priorities = [s.strip() for s in f_priorities_raw.split(",") if s.strip()][:2]
                 new_p = BuyerProfile(
-                    nickname=f_nickname, commute_location=f_commute,
-                    budget_manwon=int(f_budget), own_funds_manwon=int(f_own),
-                    monthly_payment_manwon=int(f_monthly),
-                    annual_income_manwon=int(f_income),
-                    existing_debt_manwon=int(f_debt),
-                    is_first_buyer=bool(f_first),
-                    subscription_years=int(f_subscription),
-                    family_size=int(f_family),
-                    preferred_area=f_area, preferred_size_sqm=float(f_size),
-                    preferred_type=f_type, move_in_months=int(f_months), notes=f_notes,
+                    nickname=f_nickname,
+                    assets_manwon=int(f_assets),
+                    loan_capacity_manwon=int(f_loan),
+                    office_address=f_office,
+                    commute_mode=f_mode,
+                    priorities=priorities,
+                    notes=f_notes,
                 )
                 save_profile(new_p, edit_name)
                 st.session_state["buyer_profile"] = new_p

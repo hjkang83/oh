@@ -1,57 +1,54 @@
-"""Buyer profile: persist first-time home buyer's purchase conditions.
+"""BuyerProfile: 부동산 검증 AI 에이전트의 사용자 검증 입력 (5필드).
 
-MC 인터뷰 결과를 구조화하여 저장하고, 5인 검증 분석가
-(시세·입지·리스크·재무·미래가치)에게 컨텍스트 블록으로 주입한다.
+SCENARIO_v1 기준 — MC가 5~6개 짧은 인터뷰로 수집해 5인 분석가에게 컨텍스트로 주입.
+
+5필드:
+- assets_manwon         보유 자산 (대략적 범위)
+- loan_capacity_manwon  대출 한도 (총액, 월 상환액 X)
+- office_address        회사 위치 (구체적 주소)
+- commute_mode          출퇴근 수단 (지하철/버스/자가용)
+- priorities            우선순위 (1~2개 키워드)
+
+타겟 사용자(SCENARIO_v1): 30대 후반 서울 직장인·생애최초 미혼.
+is_first_buyer 등 추가 조건은 인터뷰에서 묻지 않고 타겟 사용자 가정으로 둠 —
+재무 분석가는 BuyerProfile 외에 시스템 가정도 활용 가능.
 
 Storage: profiles/{name}.json
 """
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROFILES_DIR = REPO_ROOT / "profiles"
 DEFAULT_NAME = "default"
 
-SCHOOL_PRIORITY: dict[str, str] = {
-    "low": "낮음",
-    "medium": "보통",
-    "high": "높음",
-}
-
-PROPERTY_TYPES: dict[str, str] = {
-    "apartment": "아파트",
-    "villa": "빌라/다세대",
-    "officetel": "오피스텔",
-    "any": "무관",
+# 출퇴근 수단 라벨
+COMMUTE_MODES: dict[str, str] = {
+    "subway": "지하철",
+    "bus": "버스",
+    "car": "자가용",
+    "mixed": "복합",
+    "other": "기타",
 }
 
 
 @dataclass
 class BuyerProfile:
-    """Purchase conditions profile for first-time home buyer (고객님)."""
+    """검증 입력 프로필 (Scene 02 인터뷰 5필드 + 메타).
+
+    SCENARIO_v1: 질문은 짧게, 답변은 부담 없게. 5필드면 5인 분석가가 충분.
+    """
 
     nickname: str = "고객님"
-    commute_location: str = ""            # 출근지 (예: 판교, 강남역, 재택)
-    budget_manwon: int = 0                # 총 구매 예산 (만원, 대출 포함). 0=미입력
-    own_funds_manwon: int = 0             # 자기자본 (만원). 0=미입력
-    monthly_payment_manwon: int = 0       # 월 원리금 감당 가능액 (만원). 0=미입력
-    annual_income_manwon: int = 0         # 부부합산 연소득 (만원). 0=미입력 — 재무 분석가 정책대출 자격 판정 핵심
-    existing_debt_manwon: int = 0         # 기존 월 원리금 부담 (만원). 0=없음 — DSR 산정용
-    is_first_buyer: bool = True           # 생애최초 주택 구매자 여부 — LTV 우대 적용
-    subscription_years: int = 0           # 청약저축 가입년수 — 참고용
-    family_size: int = 1                  # 가족 수 (1=혼자, 2=부부, 3+=자녀 포함)
-    has_children: bool = False            # 현재 자녀 있음
-    plans_children: bool = False          # 자녀 계획 있음
-    school_priority: str = "low"          # low / medium / high
-    preferred_area: str = ""             # 선호 지역 힌트 (예: 마포, 성동)
-    preferred_size_sqm: float = 0.0      # 선호 전용면적 (㎡). 0=미입력
-    preferred_type: str = "apartment"    # apartment / villa / officetel / any
-    move_in_months: int = 6              # 입주 희망 시기 (몇 개월 후)
-    residence_ratio: int = 100           # 실거주 비중 0~100 (100=완전 실거주)
-    notes: str = ""                      # 자유 메모
+    assets_manwon: int = 0                     # 보유 자산 (만원, 대략 범위)
+    loan_capacity_manwon: int = 0              # 대출 한도 (만원, 총액)
+    office_address: str = ""                   # 회사 위치 (구체 주소)
+    commute_mode: str = ""                     # subway / bus / car / mixed / other
+    priorities: list[str] = field(default_factory=list)  # 1~2개 키워드
+    notes: str = ""                            # 자유 메모 (선택)
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -63,22 +60,13 @@ class BuyerProfile:
         return cls(**filtered)
 
     @property
-    def school_priority_label(self) -> str:
-        return SCHOOL_PRIORITY.get(self.school_priority, self.school_priority)
+    def commute_mode_label(self) -> str:
+        return COMMUTE_MODES.get(self.commute_mode, self.commute_mode or "미입력")
 
     @property
-    def property_type_label(self) -> str:
-        return PROPERTY_TYPES.get(self.preferred_type, self.preferred_type)
-
-    @property
-    def family_label(self) -> str:
-        base = f"{self.family_size}인"
-        tags = []
-        if self.has_children:
-            tags.append("자녀 있음")
-        elif self.plans_children:
-            tags.append("자녀 계획 있음")
-        return f"{base} ({', '.join(tags)})" if tags else base
+    def total_budget_manwon(self) -> int:
+        """보유 자산 + 대출 한도 = 총 매수 가능 예산."""
+        return self.assets_manwon + self.loan_capacity_manwon
 
 
 # ----------------------------------------------------------------------
@@ -152,58 +140,35 @@ def _format_budget(manwon: int) -> str:
     return f"{manwon:,}만원"
 
 
-def _format_size(sqm: float) -> str:
-    if sqm <= 0:
-        return "미입력"
-    pyeong = sqm / 3.3058
-    return f"{sqm:.0f}㎡ (약 {pyeong:.0f}평형)"
-
-
-def _format_move_in(months: int) -> str:
-    if months <= 0:
-        return "미입력"
-    if months < 12:
-        return f"{months}개월 내"
-    years = months // 12
-    rem = months % 12
-    if rem == 0:
-        return f"{years}년 내"
-    return f"{years}년 {rem}개월 내"
-
-
 def format_for_agents(profile: BuyerProfile | None) -> str:
-    """Build a transcript block to inject as a 'user' message at meeting start."""
+    """Build a transcript block to inject as a 'user' message at meeting start.
+
+    SCENARIO_v1 5필드 + 5인 분석가 영역 가이드.
+    """
     if profile is None:
         return ""
+    pri = ", ".join(profile.priorities) if profile.priorities else "미입력"
+    total = _format_budget(profile.total_budget_manwon) if profile.total_budget_manwon > 0 else "미입력"
     lines = [
-        "=== 👤 고객님 구매 조건 프로필 ===",
+        "=== 👤 사용자 검증 입력 ===",
         f"- 별칭: {profile.nickname}",
-        f"- 출근지: {profile.commute_location or '미입력'}",
-        f"- 총 구매 예산: {_format_budget(profile.budget_manwon)}",
-        f"- 자기자본: {_format_budget(profile.own_funds_manwon)}",
-        f"- 월 원리금 감당 가능액: {_format_budget(profile.monthly_payment_manwon)}",
-        f"- 부부합산 연소득: {_format_budget(profile.annual_income_manwon)}",
-        f"- 기존 월 원리금 부담: {_format_budget(profile.existing_debt_manwon) if profile.existing_debt_manwon > 0 else '없음'}",
-        f"- 무주택·생애최초: {'생애최초' if profile.is_first_buyer else '아님 (기존 주택 보유 또는 처분 이력)'}",
-        f"- 청약저축 가입년수: {profile.subscription_years}년" if profile.subscription_years > 0 else "- 청약저축 가입년수: 미입력",
-        f"- 가족 구성: {profile.family_label}",
-        f"- 학군 중요도: {profile.school_priority_label}",
-        f"- 선호 지역: {profile.preferred_area or '미입력'}",
-        f"- 선호 평형: {_format_size(profile.preferred_size_sqm)}",
-        f"- 선호 매물 유형: {profile.property_type_label}",
-        f"- 입주 희망 시기: {_format_move_in(profile.move_in_months)}",
-        f"- 실거주 목적 비중: {profile.residence_ratio}%",
+        f"- 보유 자산: {_format_budget(profile.assets_manwon)}",
+        f"- 대출 한도 (총액): {_format_budget(profile.loan_capacity_manwon)}",
+        f"- 총 매수 가능 예산: {total}",
+        f"- 회사 위치: {profile.office_address or '미입력'}",
+        f"- 출퇴근 수단: {profile.commute_mode_label}",
+        f"- 우선순위: {pri}",
     ]
     if profile.notes.strip():
         lines.append(f"- 메모: {profile.notes.strip()}")
     lines.append("")
     lines.append(
-        "시세 분석가는 선호 지역의 P50·호가 적정성을 검증하세요. "
-        "입지 분석가는 출근지 통근·학군·인프라를 검증하세요. "
-        "리스크 분석가는 단지·거시 리스크를 식별하세요. "
-        "재무 분석가는 예산·자기자본·월 감당액·연소득·기존 부채·생애최초 여부를 활용하여 "
-        "LTV/DSR·정책대출(디딤돌·보금자리)·총취득비용을 검증하세요. "
-        "미래가치 분석가는 선호 지역의 호재·악재 5~10년 시나리오를 검증하세요."
+        "시세 분석가: 매물 호가 vs 동일 단지 P50 검증. "
+        "입지 분석가: 회사 위치 기준 통근 + 학군·인프라 검증. "
+        "리스크 분석가: 단지·거시 리스크 식별. "
+        "재무 분석가: 보유 자산 + 대출 한도 기준 LTV/DSR + 정책대출 매칭. "
+        "미래가치 분석가: 매물 권역 호재·악재 5~10년 시나리오. "
+        "타겟 사용자(SCENARIO_v1): 30대 후반·생애최초·미혼·서울 직장인 가정."
     )
-    lines.append("=== 프로필 끝 ===")
+    lines.append("=== 입력 끝 ===")
     return "\n".join(lines)

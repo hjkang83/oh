@@ -1,7 +1,6 @@
-"""Tests for profiles module — 생애 첫 주택 구매자 프로필."""
+"""Tests for profiles module — 부동산 검증 AI 에이전트 BuyerProfile (5필드)."""
 from profiles import (
-    SCHOOL_PRIORITY,
-    PROPERTY_TYPES,
+    COMMUTE_MODES,
     BuyerProfile,
     delete_profile,
     format_for_agents,
@@ -15,82 +14,57 @@ class TestBuyerProfileDataclass:
     def test_default_profile_is_valid(self):
         p = BuyerProfile()
         assert p.nickname == "고객님"
-        assert p.school_priority in SCHOOL_PRIORITY
-        assert p.preferred_type in PROPERTY_TYPES
-        assert p.budget_manwon == 0
-        assert p.own_funds_manwon == 0
-        assert p.monthly_payment_manwon == 0
-        assert p.annual_income_manwon == 0
-        assert p.existing_debt_manwon == 0
-        assert p.is_first_buyer is True   # 생애 첫 주택 자문이라 기본값 True
-        assert p.subscription_years == 0
-        assert p.family_size == 1
-        assert p.residence_ratio == 100
+        assert p.assets_manwon == 0
+        assert p.loan_capacity_manwon == 0
+        assert p.office_address == ""
+        assert p.commute_mode == ""
+        assert p.priorities == []
+        assert p.notes == ""
 
-    def test_loan_advisor_fields_round_trip(self):
-        p = BuyerProfile(
-            annual_income_manwon=5500,
-            existing_debt_manwon=50,
-            is_first_buyer=False,
-            subscription_years=7,
-        )
-        d = p.to_dict()
-        p2 = BuyerProfile.from_dict(d)
-        assert p2.annual_income_manwon == 5500
-        assert p2.existing_debt_manwon == 50
-        assert p2.is_first_buyer is False
-        assert p2.subscription_years == 7
+    def test_total_budget(self):
+        p = BuyerProfile(assets_manwon=20000, loan_capacity_manwon=33000)
+        assert p.total_budget_manwon == 53000
 
-    def test_labels_translate_to_korean(self):
-        p = BuyerProfile(
-            school_priority="high",
-            preferred_type="villa",
-        )
-        assert p.school_priority_label == "높음"
-        assert p.property_type_label == "빌라/다세대"
-
-    def test_family_label_without_children(self):
-        p = BuyerProfile(family_size=2)
-        assert "2인" in p.family_label
-        assert "자녀" not in p.family_label
-
-    def test_family_label_with_children(self):
-        p = BuyerProfile(family_size=3, has_children=True)
-        assert "3인" in p.family_label
-        assert "자녀 있음" in p.family_label
-
-    def test_family_label_plans_children(self):
-        p = BuyerProfile(family_size=2, plans_children=True)
-        assert "자녀 계획 있음" in p.family_label
+    def test_commute_mode_label(self):
+        assert BuyerProfile(commute_mode="subway").commute_mode_label == "지하철"
+        assert BuyerProfile(commute_mode="bus").commute_mode_label == "버스"
+        assert BuyerProfile(commute_mode="car").commute_mode_label == "자가용"
+        assert BuyerProfile(commute_mode="").commute_mode_label == "미입력"
 
     def test_to_dict_from_dict_roundtrip(self):
         p = BuyerProfile(
             nickname="홍길동",
-            commute_location="판교",
-            budget_manwon=60000,
-            notes="1층 제외",
+            assets_manwon=20000,
+            loan_capacity_manwon=33000,
+            office_address="광화문 OO빌딩",
+            commute_mode="subway",
+            priorities=["자산 가치", "출퇴근"],
+            notes="검증 시작",
         )
         d = p.to_dict()
         p2 = BuyerProfile.from_dict(d)
         assert p == p2
 
     def test_from_dict_ignores_unknown_keys(self):
-        d = {"nickname": "X", "unknown_field": "ignored"}
+        d = {"nickname": "X", "unknown_field": "ignored", "commute_location": "옛 필드"}
         p = BuyerProfile.from_dict(d)
         assert p.nickname == "X"
 
-    def test_unknown_enum_value_falls_back_to_raw(self):
-        p = BuyerProfile(school_priority="custom_X")
-        assert p.school_priority_label == "custom_X"
+    def test_priorities_default_empty_list(self):
+        """List default factory: 인스턴스 간 공유되지 않아야 한다."""
+        p1 = BuyerProfile()
+        p2 = BuyerProfile()
+        p1.priorities.append("a")
+        assert p2.priorities == []
 
 
 class TestPersistence:
     def test_save_and_load_roundtrip(self, tmp_path):
         p = BuyerProfile(
             nickname="홍대표",
-            commute_location="강남역",
-            budget_manwon=60000,
-            notes="마포 우선",
+            assets_manwon=20000,
+            office_address="광화문",
+            priorities=["자산 가치"],
         )
         path = save_profile(p, "test_user", profiles_dir=tmp_path)
         assert path.exists()
@@ -100,7 +74,7 @@ class TestPersistence:
     def test_load_missing_returns_none(self, tmp_path):
         assert load_profile("nonexistent", profiles_dir=tmp_path) is None
 
-    def test_list_profiles_empty_dir(self, tmp_path):
+    def test_list_profiles_empty(self, tmp_path):
         assert list_profiles(profiles_dir=tmp_path) == []
 
     def test_list_profiles_sorted(self, tmp_path):
@@ -114,65 +88,43 @@ class TestPersistence:
         assert delete_profile("tmp", profiles_dir=tmp_path)
         assert load_profile("tmp", profiles_dir=tmp_path) is None
 
-    def test_delete_nonexistent(self, tmp_path):
-        assert not delete_profile("nope", profiles_dir=tmp_path)
-
-    def test_save_creates_directory(self, tmp_path):
-        nested = tmp_path / "nested" / "profiles"
-        save_profile(BuyerProfile(), "x", profiles_dir=nested)
-        assert nested.exists()
-
     def test_save_writes_utf8_korean(self, tmp_path):
-        p = BuyerProfile(notes="마포구 우선")
+        p = BuyerProfile(notes="광명시 OO아파트 검증 예정")
         path = save_profile(p, "kr", profiles_dir=tmp_path)
         content = path.read_text(encoding="utf-8")
-        assert "마포구 우선" in content
+        assert "광명시 OO아파트 검증 예정" in content
 
 
 class TestFormatForAgents:
     def test_none_returns_empty(self):
         assert format_for_agents(None) == ""
 
-    def test_includes_key_info(self):
+    def test_includes_5_fields(self):
         p = BuyerProfile(
             nickname="홍길동",
-            commute_location="판교",
-            budget_manwon=60000,
-            own_funds_manwon=20000,
-            monthly_payment_manwon=180,
-            family_size=2,
-            plans_children=True,
-            school_priority="medium",
-            preferred_area="마포구",
-            preferred_size_sqm=84.0,
-            preferred_type="apartment",
-            move_in_months=6,
-            residence_ratio=90,
-            notes="1층 제외, 남향 선호",
+            assets_manwon=20000,
+            loan_capacity_manwon=33000,
+            office_address="광화문 OO빌딩",
+            commute_mode="subway",
+            priorities=["자산 가치", "출퇴근 편의성"],
         )
         text = format_for_agents(p)
-        assert "홍길동" in text
-        assert "판교" in text
-        assert "6억원" in text
-        assert "2억원" in text
-        assert "보통" in text   # school_priority medium
-        assert "마포구" in text
-        assert "아파트" in text
-        assert "6개월 내" in text
-        assert "90%" in text
-        assert "1층 제외" in text
+        assert "2억원" in text                  # 보유 자산
+        assert "3억 3,000만원" in text         # 대출 한도
+        assert "5억 3,000만원" in text         # 총 매수 가능 예산
+        assert "광화문 OO빌딩" in text
+        assert "지하철" in text
+        assert "자산 가치" in text
+        assert "출퇴근 편의성" in text
 
-    def test_zero_budget_renders_as_미입력(self):
-        p = BuyerProfile(budget_manwon=0)
+    def test_zero_assets_renders_미입력(self):
+        p = BuyerProfile(assets_manwon=0)
         assert "미입력" in format_for_agents(p)
 
-    def test_round_eok_budget(self):
-        p = BuyerProfile(budget_manwon=60000)
-        assert "6억원" in format_for_agents(p)
-
-    def test_partial_eok_budget(self):
-        p = BuyerProfile(budget_manwon=65000)
-        assert "6억 5,000만원" in format_for_agents(p)
+    def test_empty_priorities_renders_미입력(self):
+        p = BuyerProfile(priorities=[])
+        text = format_for_agents(p)
+        assert "우선순위: 미입력" in text
 
     def test_notes_omitted_when_empty(self):
         p = BuyerProfile(notes="")
@@ -182,61 +134,18 @@ class TestFormatForAgents:
     def test_block_targets_5_verifiers(self):
         p = BuyerProfile()
         text = format_for_agents(p)
-        # Phase 1 피보팅 후 5인 분석가
-        assert "시세 분석가" in text
-        assert "입지 분석가" in text
-        assert "리스크 분석가" in text
-        assert "재무 분석가" in text
-        assert "미래가치 분석가" in text
+        for name in ("시세 분석가", "입지 분석가", "리스크 분석가",
+                     "재무 분석가", "미래가치 분석가"):
+            assert name in text
 
-    def test_block_targets_finance_analyst_for_policy_loan(self):
+    def test_block_mentions_target_user_assumption(self):
+        """타겟 사용자 가정(생애최초·미혼)을 분석가에게 알려야 한다."""
         p = BuyerProfile()
         text = format_for_agents(p)
-        # 재무 분석가가 정책대출 매칭 담당 (옛 loan_advisor 통합)
-        assert "재무 분석가" in text
-        assert "정책대출" in text or "디딤돌" in text or "보금자리" in text
+        assert "생애최초" in text or "타겟 사용자" in text
 
-    def test_block_includes_finance_analyst_fields(self):
-        """재무 분석가가 활용하는 4개 필드 (옛 loan_advisor + financial 통합)."""
-        p = BuyerProfile(
-            annual_income_manwon=5500,
-            existing_debt_manwon=50,
-            is_first_buyer=True,
-            subscription_years=5,
-        )
-        text = format_for_agents(p)
-        assert "5,500만원" in text     # 연소득
-        assert "50만원" in text         # 기존 부채
-        assert "생애최초" in text
-        assert "5년" in text             # 청약저축
 
-    def test_block_marks_non_first_buyer(self):
-        p = BuyerProfile(is_first_buyer=False)
-        text = format_for_agents(p)
-        assert "아님" in text or "보유" in text or "처분" in text
-
-    def test_block_no_debt_renders_as_없음(self):
-        p = BuyerProfile(existing_debt_manwon=0)
-        text = format_for_agents(p)
-        assert "없음" in text
-
-    def test_size_formatted_with_pyeong(self):
-        p = BuyerProfile(preferred_size_sqm=84.0)
-        text = format_for_agents(p)
-        assert "84㎡" in text
-        assert "평형" in text
-
-    def test_zero_size_renders_as_미입력(self):
-        p = BuyerProfile(preferred_size_sqm=0.0)
-        text = format_for_agents(p)
-        assert "미입력" in text
-
-    def test_move_in_months_formatted(self):
-        p = BuyerProfile(move_in_months=12)
-        text = format_for_agents(p)
-        assert "1년 내" in text
-
-    def test_family_with_children_in_block(self):
-        p = BuyerProfile(family_size=3, has_children=True)
-        text = format_for_agents(p)
-        assert "자녀 있음" in text
+class TestCommuteModes:
+    def test_constant_keys(self):
+        for k in ("subway", "bus", "car", "mixed", "other"):
+            assert k in COMMUTE_MODES

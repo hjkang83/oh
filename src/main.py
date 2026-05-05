@@ -38,8 +38,7 @@ from file_parser import format_for_agents as format_files_for_agents  # noqa: E4
 from meeting import Meeting  # noqa: E402
 from pipeline import PipelineResult, run_pipeline  # noqa: E402
 from profiles import (  # noqa: E402
-    SCHOOL_PRIORITY,
-    PROPERTY_TYPES as BUYER_PROPERTY_TYPES,
+    COMMUTE_MODES,
     BuyerProfile,
     format_for_agents as format_profile_for_agents,
     list_profiles,
@@ -99,7 +98,8 @@ def _load_profile_or_warn(name: str | None) -> Profile | None:
             print("   `--init-profile <이름>` 으로 새 프로필을 만들 수 있습니다.")
         return None
     print(f"👤 프로필 로드: '{name}' — {profile.nickname} · "
-          f"예산 {profile.budget_manwon:,}만원 · 출근지 {profile.commute_location or '미입력'}")
+          f"보유 {profile.assets_manwon:,}만원 + 대출 {profile.loan_capacity_manwon:,}만원 · "
+          f"회사 {profile.office_address or '미입력'}")
     return profile
 
 
@@ -115,7 +115,8 @@ def _print_profile_list() -> None:
         if p is None:
             print(f"  • {name} (읽기 실패)")
             continue
-        print(f"  • {name} — {p.nickname} · 예산 {p.budget_manwon:,}만원 · {p.commute_location or '출근지 미입력'}")
+        print(f"  • {name} — {p.nickname} · 보유+대출 {p.total_budget_manwon:,}만원 · "
+              f"회사 {p.office_address or '미입력'}")
 
 
 def _ask(prompt: str, default: str) -> str:
@@ -158,28 +159,22 @@ def _run_init_profile(name: str = "default") -> None:
         base = Profile()
 
     nickname = _ask("닉네임", base.nickname)
-    commute_location = _ask("출근지 (예: 판교, 강남역, 재택)", base.commute_location)
-    budget_manwon = _ask_int("총 구매 예산 (만원, 0=미입력)", base.budget_manwon)
-    own_funds_manwon = _ask_int("자기자본 (만원, 0=미입력)", base.own_funds_manwon)
-    monthly_payment_manwon = _ask_int("월 원리금 감당 가능액 (만원, 0=미입력)", base.monthly_payment_manwon)
-    family_size = _ask_int("가족 수", base.family_size, min_val=1)
-    preferred_area = _ask("선호 지역 (예: 마포, 성동)", base.preferred_area)
-    preferred_size_sqm = float(_ask("선호 전용면적 (㎡, 0=미입력)", str(int(base.preferred_size_sqm))))
-    preferred_type = _ask_choice("선호 매물 유형", BUYER_PROPERTY_TYPES, base.preferred_type)
-    move_in_months = _ask_int("입주 희망 시기 (개월 후)", base.move_in_months, min_val=1)
+    assets_manwon = _ask_int("보유 자산 (만원, 0=미입력)", base.assets_manwon)
+    loan_capacity_manwon = _ask_int("대출 한도 — 총액 (만원, 0=미입력)", base.loan_capacity_manwon)
+    office_address = _ask("회사 위치 (예: 광화문 OO빌딩)", base.office_address)
+    commute_mode = _ask_choice("출퇴근 수단", COMMUTE_MODES, base.commute_mode or "subway")
+    pri_raw = _ask("우선순위 1~2개 (콤마 구분, 예: 자산 가치, 출퇴근)",
+                   ", ".join(base.priorities))
+    priorities = [p.strip() for p in pri_raw.split(",") if p.strip()][:2]
     notes = _ask("메모 (선택, 자유 입력)", base.notes)
 
     profile = BuyerProfile(
         nickname=nickname,
-        commute_location=commute_location,
-        budget_manwon=budget_manwon,
-        own_funds_manwon=own_funds_manwon,
-        monthly_payment_manwon=monthly_payment_manwon,
-        family_size=family_size,
-        preferred_area=preferred_area,
-        preferred_size_sqm=preferred_size_sqm,
-        preferred_type=preferred_type,
-        move_in_months=move_in_months,
+        assets_manwon=assets_manwon,
+        loan_capacity_manwon=loan_capacity_manwon,
+        office_address=office_address,
+        commute_mode=commute_mode,
+        priorities=priorities,
         notes=notes,
     )
     path = save_profile(profile, name)
